@@ -1,8 +1,11 @@
 # GapGPT Chat Bridge & MCP Server 🚀
 
-یک پل ارتباطی هوشمند و سرور **Model Context Protocol (MCP)** برای اتصال اجنت‌های هوش مصنوعی (**GapCode**, **Antigravity**, **Claude Desktop**, **Cursor**) به بخش **چت وب‌سرویس GapGPT**.
+یک پل ارتباطی هوشمند، میکروسرویس ابری و سرور **Model Context Protocol (MCP)** برای اتصال اجنت‌های هوش مصنوعی (**GapCode**, **Antigravity**, **Claude Desktop**, **Cursor**) به بخش **چت وب‌سرویس GapGPT**.
 
 این پروژه طراحی شده تا استدلال‌های سنگین، طراحی معماری، عیب‌یابی‌ها و چک‌لیست‌های طولانی را به سهمیه بدون استفاده گفتگوی **Pro (۳۰۰ پیام در ۳ ساعت و ۲۴۰۰ پیام در هر روز)** با مدل‌های تراز اول مانند **Claude Opus 5.5 (عمیق)** محول کند و مصرف توکن اختصاصی اجنت را به صفر برساند.
+
+> 🌐 **سرویس ابری زنده و مستقر بر دامنه:** [https://gapgpt.desktopcenter.ir](https://gapgpt.desktopcenter.ir)  
+> 📖 **[گزارش فنی و داستان شکل‌گیری پروژه (JOURNEY.md)](JOURNEY.md)** را مطالعه کنید.
 
 ---
 
@@ -145,6 +148,32 @@ docker compose up -d --build
 سرویس روی پورت `8080` بالا می‌آید و اندپوینت‌های زیر را فراهم می‌کند:
 - `POST /v1/chat/completions` : استاندارد سازگار با OpenAI (قابل استفاده در تمامی کلاینت‌ها، اسکریپت‌ها، Cursor، OpenWebUI و ...)
 - `POST /ask` : ارسال مستقیم سوال با تعیین Effort و شناسه مکالمه
+- `GET /quota` : وضعیت سهمیه چت
+- `GET /health` : بررسی سلامت سرویس
+
+---
+
+## 🌐 استفاده مستقیم از سرویس ابری (Hosted on Cloud)
+
+سرویس اختصاصی بر روی دامنه با پروتکل امن HTTPS و گواهی SSL معتبر فعال است:
+* **Base URL:** `https://gapgpt.desktopcenter.ir`
+
+### نمونه ارسال درخواست به اندپوینت OpenAI:
+```bash
+curl -X POST https://gapgpt.desktopcenter.ir/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-opus",
+    "messages": [
+      {"role": "user", "content": "چک‌لیست ایمن‌سازی دیتابیس پستگرس را ارائه بده"}
+    ]
+  }'
+```
+
+### نمونه استعلام سهمیه حساب از طریق کلود:
+```bash
+curl -s https://gapgpt.desktopcenter.ir/quota
+```
 - `GET /quota` : وضعیت سهمیه چت
 - `GET /health` : بررسی سلامت سرویس
 

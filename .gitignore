@@ -24,3 +24,6 @@ run_remote.py
 askpass.bat
 deploy_remote.py
 test_remote_http.py
+setup_nginx.py
+update_remote_nginx.py
+setup_ssl_nginx.py
