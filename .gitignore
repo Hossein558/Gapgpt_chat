@@ -19,3 +19,4 @@ scratch/
 desktop-auth.secure.json
 Local State
 tokens.json
+.token

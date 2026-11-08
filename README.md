@@ -122,6 +122,40 @@ gapcode mcp list
 
 ---
 
+## 🐳 استقرار در لینوکس، داکر (Docker) و کلود VM
+
+این ابزار روی لینوکس و محیط‌های کانتینری به طور کامل و مستقل از ویندوز کار می‌کند. هسته وب‌سوکت آن هیچ وابستگی به GUI ندارد.
+
+### ۱. استخراج توکن در ویندوز:
+برای انتقال به لینوکس، ابتدا توکن خود را در سیستم ویندوزی استخراج کنید:
+```bash
+python gap_chat.py --export-token
+```
+خروجی به شما دستور `export GAPGPT_TOKEN="..."` را می‌دهد.
+
+### ۲. اجرا با Docker Compose (سرور HTTP و OpenAI API):
+یک فایل `.env` در کنار `docker-compose.yml` بسازید:
+```env
+GAPGPT_TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+```
+سپس اجرا کنید:
+```bash
+docker compose up -d --build
+```
+سرویس روی پورت `8080` بالا می‌آید و اندپوینت‌های زیر را فراهم می‌کند:
+- `POST /v1/chat/completions` : استاندارد سازگار با OpenAI (قابل استفاده در تمامی کلاینت‌ها، اسکریپت‌ها، Cursor، OpenWebUI و ...)
+- `POST /ask` : ارسال مستقیم سوال با تعیین Effort و شناسه مکالمه
+- `GET /quota` : وضعیت سهمیه چت
+- `GET /health` : بررسی سلامت سرویس
+
+### ۳. اجرا در لینوکس بدون داکر (Standalone):
+```bash
+export GAPGPT_TOKEN="eyJhbGciOi..."
+node gap_chat.mjs -p "دستور لینوکسی برای بررسی دیسک" -m claude-opus
+```
+
+---
+
 ## 💻 استفاده از خط فرمان (CLI)
 
 ### پرسیدن سوال با Claude Opus 5.5 و تفکر عمیق:

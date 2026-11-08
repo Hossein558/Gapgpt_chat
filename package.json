@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node gapgpt_mcp.mjs",
+    "server": "node http_server.mjs",
     "chat": "node gap_chat.mjs",
     "quota": "node gap_chat.mjs --quota"
   },

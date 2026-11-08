@@ -12,6 +12,22 @@ class DATA_BLOB(ctypes.Structure):
     ]
 
 def get_gapgpt_access_token():
+    # 1. Environment variable (Linux, Docker, Cloud)
+    if os.environ.get("GAPGPT_TOKEN"):
+        return os.environ["GAPGPT_TOKEN"].strip()
+
+    # 2. Local token file (.token)
+    token_file = os.path.join(os.path.dirname(__file__), ".token")
+    if os.path.exists(token_file):
+        with open(token_file, "r", encoding="utf-8") as f:
+            t = f.read().strip()
+            if t:
+                return t
+
+    # 3. Windows DPAPI extraction (Windows Desktop)
+    if sys.platform != "win32":
+        raise EnvironmentError("GAPGPT_TOKEN environment variable not set (required on non-Windows systems)")
+
     CryptUnprotectData = ctypes.windll.crypt32.CryptUnprotectData
     CryptUnprotectData.argtypes = [
         ctypes.POINTER(DATA_BLOB),

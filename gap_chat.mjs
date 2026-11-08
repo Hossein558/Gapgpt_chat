@@ -20,9 +20,22 @@ function getPythonPath() {
 const PYTHON_PATH = getPythonPath();
 
 export function getAccessToken() {
+  // 1. Direct environment variable (Ideal for Linux, Docker, Cloud VMs)
+  if (process.env.GAPGPT_TOKEN && process.env.GAPGPT_TOKEN.trim()) {
+    return process.env.GAPGPT_TOKEN.trim();
+  }
+
+  // 2. Local token file (.token)
+  const tokenFile = path.join(__dirname, '.token');
+  if (fs.existsSync(tokenFile)) {
+    const content = fs.readFileSync(tokenFile, 'utf-8').trim();
+    if (content) return content;
+  }
+
+  // 3. Fallback to Windows DPAPI via auth.py (Windows Desktop only)
   const res = spawnSync(PYTHON_PATH, [path.join(__dirname, 'auth.py')]);
   if (res.status !== 0) {
-    throw new Error('Failed to retrieve GapGPT access token: ' + res.stderr.toString());
+    throw new Error('Failed to retrieve GapGPT access token (set GAPGPT_TOKEN env var for Linux/Docker): ' + res.stderr.toString());
   }
   return res.stdout.toString().trim().split('\n').pop().trim();
 }

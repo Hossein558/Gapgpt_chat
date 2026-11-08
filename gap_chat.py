@@ -36,8 +36,23 @@ def main():
     parser.add_argument("-q", "--quota", action="store_true", help="Check current subscription quota and rate limits")
     parser.add_argument("--list", type=int, nargs="?", const=10, help="List recent chats")
     parser.add_argument("--history", help="Retrieve conversation history by chat ID")
+    parser.add_argument("--export-token", action="store_true", help="Export active access token for use in Linux/Docker environment")
 
     args = parser.parse_args()
+
+    if args.export_token:
+        try:
+            from auth import get_gapgpt_access_token
+            token = get_gapgpt_access_token()
+            token_path = os.path.join(SCRIPT_DIR, ".token")
+            with open(token_path, "w", encoding="utf-8") as f:
+                f.write(token)
+            print(f"Token saved to: {token_path}")
+            print(f"Export command for Linux/Docker:\nexport GAPGPT_TOKEN=\"{token}\"")
+        except Exception as e:
+            print(f"Error exporting token: {e}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
 
     prompt_text = args.prompt or args.prompt_flag
 
