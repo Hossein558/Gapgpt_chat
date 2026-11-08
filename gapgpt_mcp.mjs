@@ -1,5 +1,5 @@
 import readline from 'readline';
-import { askGapChat, getChatHistory, listRecentChats, getQuota, resolveModel } from './gap_chat.mjs';
+import { askGapChat, getChatHistory, listRecentChats, getQuota, resolveModel, getTokenExpiryInfo } from './gap_chat.mjs';
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -49,7 +49,7 @@ rl.on('line', async (line) => {
       },
       serverInfo: {
         name: 'gapgpt-chat-bridge',
-        version: '1.1.0'
+        version: '1.3.0'
       }
     });
   }
@@ -61,6 +61,14 @@ rl.on('line', async (line) => {
   if (method === 'tools/list') {
     return sendResponse(id, {
       tools: [
+        {
+          name: 'get_gapgpt_auth_status',
+          description: 'Check the remaining lifetime and expiration date of your GapGPT authentication token.',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
         {
           name: 'ask_gapgpt_chat',
           description: 'Ask a question or delegate a task to GapGPT Chat (Claude Opus 5.5, Sonnet 5.5, GPT-6, DeepSeek) using your unused Chat subscription quota to save Agent tokens. Supports reasoning effort levels (high/deep, medium, low/fast) and returns the answer and the Conversation ID. If chat quota is exceeded, automatically attempts lighter fallback models or returns fallback_required: true instructing the agent to proceed on its own.',
@@ -135,7 +143,17 @@ rl.on('line', async (line) => {
   if (method === 'tools/call') {
     const { name, arguments: args } = params || {};
     try {
-      if (name === 'ask_gapgpt_chat') {
+      if (name === 'get_gapgpt_auth_status') {
+        const info = getTokenExpiryInfo();
+        return sendResponse(id, {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(info, null, 2)
+            }
+          ]
+        });
+      } else if (name === 'ask_gapgpt_chat') {
         const result = await askGapChat({
           prompt: args.prompt,
           model: args.model || 'claude-opus',

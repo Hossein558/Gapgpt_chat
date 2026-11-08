@@ -1,8 +1,15 @@
 import http from 'http';
-import { askGapChat, getQuota, listRecentChats, getChatHistory } from './gap_chat.mjs';
+import { askGapChat, getQuota, listRecentChats, getChatHistory, getTokenExpiryInfo } from './gap_chat.mjs';
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const HOST = process.env.HOST || '0.0.0.0';
+const BRIDGE_API_KEY = (process.env.BRIDGE_API_KEY || '').trim();
+
+if (!BRIDGE_API_KEY) {
+  console.warn('⚠️  [SECURITY WARNING] BRIDGE_API_KEY is not set! Running in open public mode.');
+} else {
+  console.log('🔒 Security enabled: Protected endpoints require Authorization: Bearer <API_KEY>');
+}
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -25,10 +32,23 @@ function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
   });
   res.end(payload);
+}
+
+function isAuthorized(req) {
+  if (!BRIDGE_API_KEY) return true;
+  const authHeader = req.headers['authorization'] || '';
+  const xApiKey = req.headers['x-api-key'] || '';
+
+  if (authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7).trim();
+    if (token === BRIDGE_API_KEY) return true;
+  }
+  if (xApiKey === BRIDGE_API_KEY) return true;
+  return false;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -38,21 +58,39 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
     });
     return res.end();
   }
 
+  // Public health check endpoint
+  if (pathname === '/health' || pathname === '/') {
+    return sendJson(res, 200, {
+      status: 'ok',
+      service: 'GapGPT-Bridge-HTTP',
+      version: '1.3.0',
+      auth_enabled: !!BRIDGE_API_KEY,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // Protected endpoints authentication check
+  if (!isAuthorized(req)) {
+    return sendJson(res, 401, {
+      error: {
+        message: 'Unauthorized: Missing or invalid API Key. Provide Authorization: Bearer <API_KEY> or X-API-Key header.',
+        type: 'invalid_request_error',
+        code: 'unauthorized'
+      }
+    });
+  }
+
   try {
-    // Health check
-    if (pathname === '/health' || pathname === '/') {
-      return sendJson(res, 200, {
-        status: 'ok',
-        service: 'GapGPT-Bridge-HTTP',
-        version: '1.2.0',
-        timestamp: new Date().toISOString()
-      });
+    // Auth and token expiration check
+    if (pathname === '/auth/status' && req.method === 'GET') {
+      const info = getTokenExpiryInfo();
+      return sendJson(res, 200, info);
     }
 
     // Quota check
@@ -61,7 +99,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, quota);
     }
 
-    // Direct Ask
+    // Direct Ask endpoint
     if (pathname === '/ask' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const { prompt, model, effort, conversation_id } = body;
@@ -88,13 +126,73 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'No prompt or messages provided' });
       }
 
+      // Handle Streaming (SSE)
+      if (body.stream) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+          'Access-Control-Allow-Origin': '*'
+        });
+
+        const chatId = `chatcmpl-${Date.now()}`;
+        const created = Math.floor(Date.now() / 1000);
+
+        const onChunk = (text) => {
+          const chunkPayload = {
+            id: chatId,
+            object: 'chat.completion.chunk',
+            created: created,
+            model: model,
+            choices: [
+              {
+                index: 0,
+                delta: { content: text },
+                finish_reason: null
+              }
+            ]
+          };
+          res.write(`data: ${JSON.stringify(chunkPayload)}\n\n`);
+        };
+
+        try {
+          const result = await askGapChat({
+            prompt,
+            model,
+            effort: 'high',
+            onChunk
+          });
+
+          const stopPayload = {
+            id: chatId,
+            object: 'chat.completion.chunk',
+            created: created,
+            model: result.model || model,
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: 'stop'
+              }
+            ]
+          };
+          res.write(`data: ${JSON.stringify(stopPayload)}\n\n`);
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        } catch (err) {
+          res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+          return res.end();
+        }
+      }
+
+      // Non-streaming response
       const result = await askGapChat({
         prompt,
         model,
         effort: 'high'
       });
 
-      // Format as OpenAI ChatCompletionResponse
       return sendJson(res, 200, {
         id: `chatcmpl-${Date.now()}`,
         object: 'chat.completion',

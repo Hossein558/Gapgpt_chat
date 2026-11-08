@@ -35,9 +35,51 @@ export function getAccessToken() {
   // 3. Fallback to Windows DPAPI via auth.py (Windows Desktop only)
   const res = spawnSync(PYTHON_PATH, [path.join(__dirname, 'auth.py')]);
   if (res.status !== 0) {
-    throw new Error('Failed to retrieve GapGPT access token (set GAPGPT_TOKEN env var for Linux/Docker): ' + res.stderr.toString());
+    const errText = res.stderr ? res.stderr.toString() : (res.error?.message || 'Process failed or python not found');
+  throw new Error('Failed to retrieve GapGPT access token (set GAPGPT_TOKEN env var for Linux/Docker): ' + errText);
   }
   return res.stdout.toString().trim().split('\n').pop().trim();
+}
+
+
+export function getTokenExpiryInfo() {
+  try {
+    const token = getAccessToken();
+    const parts = token.split(".");
+    if (parts.length < 2) {
+      return { status: "unknown", error: "Invalid JWT token structure" };
+    }
+    const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
+    const exp = payload.exp ? new Date(payload.exp * 1000) : null;
+    const iat = payload.iat ? new Date(payload.iat * 1000) : null;
+    const now = new Date();
+
+    let daysRemaining = null;
+    let isExpired = false;
+    let warning = null;
+
+    if (exp) {
+      const diffMs = exp.getTime() - now.getTime();
+      daysRemaining = Math.max(0, Math.round((diffMs / (1000 * 60 * 60 * 24)) * 10) / 10);
+      isExpired = diffMs <= 0;
+      if (isExpired) {
+        warning = "توکن منقضی شده است! لطفاً با دستور python gap_chat.py --export-token در ویندوز توکن جدید ایجاد و در سرور قرار دهید.";
+      } else if (daysRemaining < 3) {
+        warning = `توکن در کمتر از ${daysRemaining} روز آینده منقضی خواهد شد. نیاز به تمدید دارد.`;
+      }
+    }
+
+    return {
+      status: isExpired ? "expired" : (daysRemaining !== null && daysRemaining < 3 ? "expiring_soon" : "active"),
+      issued_at: iat ? iat.toISOString() : null,
+      expires_at: exp ? exp.toISOString() : null,
+      days_remaining: daysRemaining,
+      is_expired: isExpired,
+      warning: warning
+    };
+  } catch (err) {
+    return { status: "error", error: err.message };
+  }
 }
 
 export function resolveModel(modelName) {
@@ -411,6 +453,10 @@ if (process.argv[1] && process.argv[1].endsWith('gap_chat.mjs')) {
       chatId = args[++i];
     } else if (args[i] === '--json') {
       isJson = true;
+    } else if (args[i] === '--status' || args[i] === '-s') {
+      const info = getTokenExpiryInfo();
+      console.log(JSON.stringify(info, null, 2));
+      process.exit(0);
     } else if (args[i] === '--quota' || args[i] === '-q') {
       getQuota().then(res => {
         console.log(JSON.stringify(res, null, 2));

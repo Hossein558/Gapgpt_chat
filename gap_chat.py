@@ -33,6 +33,7 @@ def main():
     parser.add_argument("-e", "--effort", default="high", choices=["high", "medium", "low", "deep", "thoughtful", "quick", "عمیق", "متفکر", "سریع"], help="Reasoning Effort: high/عمیق (default), medium/متفکر, low/سریع")
     parser.add_argument("-c", "--chat-id", default="", help="Conversation ID to continue")
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
+    parser.add_argument("-s", "--status", action="store_true", help="Check active token expiry status")
     parser.add_argument("-q", "--quota", action="store_true", help="Check current subscription quota and rate limits")
     parser.add_argument("--list", type=int, nargs="?", const=10, help="List recent chats")
     parser.add_argument("--history", help="Retrieve conversation history by chat ID")
@@ -58,7 +59,9 @@ def main():
 
     cmd = [NODE_PATH, MJS_PATH]
 
-    if args.quota:
+    if args.status:
+        cmd += ["--status"]
+    elif args.quota:
         cmd += ["--quota"]
     elif args.list is not None:
         cmd += ["--list", str(args.list)]

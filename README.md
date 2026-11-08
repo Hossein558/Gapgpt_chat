@@ -46,15 +46,17 @@
 
 ## 🛠 ابزارهای ارائه‌شده در سرور MCP
 
-وقتی سرور را در اجنت رجیستر می‌کنید، ۴ ابزار زیر در دسترس اجنت قرار می‌گیرد:
+وقتی سرور را در اجنت رجیستر می‌کنید، ۵ ابزار زیر در دسترس اجنت قرار می‌گیرد:
 
 1. **`ask_gapgpt_chat`**:
    ارسال درخواست به چت گپ و دریافت پاسخ همراه با شناسه مکالمه (با پشتیبانی از fallback و تعیین مدل و سطح تفکر).
 2. **`get_gapgpt_quota`**:
    استعلام وضعیت سهمیه چت، محدودیت‌های ۳ ساعته و روزانه.
-3. **`get_gapgpt_chat_history`**:
+3. **`get_gapgpt_auth_status`**:
+   بررسی وضعیت اعتبار توکن، تاریخ انقضا و روزهای باقی‌مانده.
+4. **`get_gapgpt_chat_history`**:
    مشاهده و بازخوانی تاریخچه پیام‌های یک چت خاص با `conversation_id`.
-4. **`list_gapgpt_recent_chats`**:
+5. **`list_gapgpt_recent_chats`**:
    فهرست‌گیری از آخرین گفتگوهای ثبت‌شده در حساب کاربر.
 
 ---
@@ -140,16 +142,72 @@ python gap_chat.py --export-token
 یک فایل `.env` در کنار `docker-compose.yml` بسازید:
 ```env
 GAPGPT_TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+# کلید امنیتی جهت محافظت از اندپوینت‌های عمومی (اختیاری اما شدیداً توصیه شده):
+BRIDGE_API_KEY="your_secret_api_key_here"
 ```
 سپس اجرا کنید:
 ```bash
 docker compose up -d --build
 ```
-سرویس روی پورت `8080` بالا می‌آید و اندپوینت‌های زیر را فراهم می‌کند:
-- `POST /v1/chat/completions` : استاندارد سازگار با OpenAI (قابل استفاده در تمامی کلاینت‌ها، اسکریپت‌ها، Cursor، OpenWebUI و ...)
+سرویس به صورت کانتینری بالا می‌آید و اندپوینت‌های زیر را فراهم می‌کند:
+- `POST /v1/chat/completions` : استاندارد سازگار با OpenAI با پشتیبانی کامل از **استریمینگ زنده (`"stream": true`)**
 - `POST /ask` : ارسال مستقیم سوال با تعیین Effort و شناسه مکالمه
-- `GET /quota` : وضعیت سهمیه چت
-- `GET /health` : بررسی سلامت سرویس
+- `GET /quota` : وضعیت سهمیه چت و محدودیت‌های زمانی
+- `GET /auth/status` : بررسی وضعیت سلامت توکن و روزهای باقی‌مانده تا انقضا
+- `GET /health` : بررسی عمومی سلامت سرویس (Public)
+
+---
+
+## 🔒 امنیت و احراز هویت (API Key Security)
+
+برای جلوگیری از سوءاستفاده افراد ناشناس در محیط‌های ابری، می‌توانید متغیر `BRIDGE_API_KEY` را در فایل `.env` تنظیم کنید. در این صورت تمامی اندپوینت‌های پردازشی محافظت شده و کلاینت‌ها باید کلید را در هدر ارسال کنند:
+
+```bash
+# با هدر استاندارد Bearer:
+-H "Authorization: Bearer your_secret_api_key_here"
+
+# یا با هدر X-API-Key:
+-H "X-API-Key: your_secret_api_key_here"
+```
+
+> [!NOTE]
+> اندپوینت `/health` جهت مانیتورینگ سلامت سرویس بدون نیاز به کلید باز می‌ماند.
+
+---
+
+## ⏰ مانیتورینگ و تمدید خودکار توکن (Token Expiry & Status)
+
+توکن‌های GapGPT به صورت JWT با تاریخ انقضا صادر می‌شوند (معمولاً اعتبارهای چندروزه). با استفاده از قابلیت‌های نسخه جدید می‌توانید وضعیت اعتبار توکن را بررسی کنید:
+
+### ۱. استعلام وضعیت انقضای توکن از طریق وب‌سرویس:
+```bash
+curl -s https://gapgpt.desktopcenter.ir/auth/status \
+  -H "Authorization: Bearer your_secret_api_key_here"
+```
+خروجی نمونه:
+```json
+{
+  "status": "active",
+  "issued_at": "2026-11-08T10:23:03.000Z",
+  "expires_at": "2026-11-16T10:23:03.000Z",
+  "days_remaining": 7.9,
+  "is_expired": false,
+  "warning": null
+}
+```
+
+### ۲. استعلام با خط فرمان:
+```bash
+python gap_chat.py --status
+# یا
+node gap_chat.mjs --status
+```
+
+### ۳. تمدید توکن پس از انقضا:
+در سیستم ویندوزی خود که اپلیکیشن GapGPT Desktop در آن لاگین است، دستور زیر را اجرا کرده و مقدار توکن را در `.env` سرور جایگزین و کانتینر را ریستارت کنید:
+```bash
+python gap_chat.py --export-token
+```
 
 ---
 
@@ -158,12 +216,14 @@ docker compose up -d --build
 سرویس اختصاصی بر روی دامنه با پروتکل امن HTTPS و گواهی SSL معتبر فعال است:
 * **Base URL:** `https://gapgpt.desktopcenter.ir`
 
-### نمونه ارسال درخواست به اندپوینت OpenAI:
+### نمونه ارسال درخواست به اندپوینت OpenAI (با استریم یا بدون استریم):
 ```bash
 curl -X POST https://gapgpt.desktopcenter.ir/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_secret_api_key_here" \
   -d '{
     "model": "claude-opus",
+    "stream": true,
     "messages": [
       {"role": "user", "content": "چک‌لیست ایمن‌سازی دیتابیس پستگرس را ارائه بده"}
     ]
@@ -172,7 +232,8 @@ curl -X POST https://gapgpt.desktopcenter.ir/v1/chat/completions \
 
 ### نمونه استعلام سهمیه حساب از طریق کلود:
 ```bash
-curl -s https://gapgpt.desktopcenter.ir/quota
+curl -s https://gapgpt.desktopcenter.ir/quota \
+  -H "Authorization: Bearer your_secret_api_key_here"
 ```
 - `GET /quota` : وضعیت سهمیه چت
 - `GET /health` : بررسی سلامت سرویس
