@@ -419,10 +419,22 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
         finalText = finalText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
       }
 
-      const cotMatch = finalText.match(/^(The user (?:is asking|wants|needs)[\s\S]*?(?:Let me|I will|I should)[\s\S]*?\n\n)([\s\S]+)$/i);
-      if (cotMatch && !cleanReasoning) {
-        cleanReasoning = cotMatch[1].trim();
-        finalText = cotMatch[2].trim();
+      // Detect and strip unbracketed scratchpad / Chain-of-Thought (e.g. "The request asks me to...", "The user is asking...", etc.)
+      const isScratchpadStart = /^(?:The (?:user|request|prompt)|Let me (?:analyze|think|examine|draft)|Wait,|I (?:need to|should|must)|This is (?:a|an)|In this task)\b/i.test(finalText);
+      if (isScratchpadStart) {
+        const persianIndex = finalText.search(/[\u0600-\u06FF]/);
+        if (persianIndex > 0) {
+          const preamble = finalText.slice(0, persianIndex);
+          cleanReasoning = (cleanReasoning ? cleanReasoning + '\n' : '') + preamble.trim();
+          finalText = finalText.slice(persianIndex).trim();
+          finalText = finalText.replace(/^[A-Za-z0-9\s\.\:\,\-]+\b(?=[\u0600-\u06FF])/s, '').trim();
+        } else {
+          const engSplit = finalText.match(/^(.*?)(?:\n\n|\n)(?:(?:Here (?:is|are)|Below is|Subject:|Dear |Hello |Hi |Thank you|I would be happy to)[\s\S]+)$/i);
+          if (engSplit) {
+            cleanReasoning = (cleanReasoning ? cleanReasoning + '\n' : '') + engSplit[1].trim();
+            finalText = finalText.slice(engSplit[1].length).trim();
+          }
+        }
       }
 
       resolve({
