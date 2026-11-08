@@ -19,37 +19,105 @@ function getPythonPath() {
 
 const PYTHON_PATH = getPythonPath();
 
-export function getAccessToken() {
+let liveAccessToken = null;
+let liveRefreshToken = null;
+
+export function getTokens() {
+  if (liveAccessToken) {
+    return { accessToken: liveAccessToken, refreshToken: liveRefreshToken || '' };
+  }
+
   // 1. Direct environment variable (Ideal for Linux, Docker, Cloud VMs)
   if (process.env.GAPGPT_TOKEN && process.env.GAPGPT_TOKEN.trim()) {
-    return process.env.GAPGPT_TOKEN.trim();
+    liveAccessToken = process.env.GAPGPT_TOKEN.trim();
+    liveRefreshToken = (process.env.GAPGPT_REFRESH_TOKEN || '').trim();
+    return { accessToken: liveAccessToken, refreshToken: liveRefreshToken };
   }
 
   // 2. Local token file (.token)
   const tokenFile = path.join(__dirname, '.token');
   if (fs.existsSync(tokenFile)) {
-    const content = fs.readFileSync(tokenFile, 'utf-8').trim();
-    if (content) return content;
+    try {
+      const content = fs.readFileSync(tokenFile, 'utf-8').trim();
+      if (content.startsWith('{')) {
+        const data = JSON.parse(content);
+        liveAccessToken = (data.accessToken || data.access || '').trim();
+        liveRefreshToken = (data.refreshToken || data.refresh || '').trim();
+        if (liveAccessToken) return { accessToken: liveAccessToken, refreshToken: liveRefreshToken };
+      } else if (content) {
+        liveAccessToken = content;
+        return { accessToken: liveAccessToken, refreshToken: '' };
+      }
+    } catch {}
   }
 
   // 3. Fallback to Windows DPAPI via auth.py (Windows Desktop only)
-  const res = spawnSync(PYTHON_PATH, [path.join(__dirname, 'auth.py')]);
-  if (res.status !== 0) {
-    const errText = res.stderr ? res.stderr.toString() : (res.error?.message || 'Process failed or python not found');
-  throw new Error('Failed to retrieve GapGPT access token (set GAPGPT_TOKEN env var for Linux/Docker): ' + errText);
-  }
-  return res.stdout.toString().trim().split('\n').pop().trim();
+  try {
+    const res = spawnSync(PYTHON_PATH, [path.join(__dirname, 'auth.py'), '--json']);
+    if (res.status === 0) {
+      const data = JSON.parse(res.stdout.toString().trim());
+      liveAccessToken = data.accessToken || '';
+      liveRefreshToken = data.refreshToken || '';
+      return { accessToken: liveAccessToken, refreshToken: liveRefreshToken };
+    }
+  } catch {}
+
+  throw new Error('Failed to retrieve GapGPT access token (set GAPGPT_TOKEN env var for Linux/Docker)');
 }
 
+export function getAccessToken() {
+  return getTokens().accessToken;
+}
+
+export function getRefreshToken() {
+  return getTokens().refreshToken;
+}
+
+export function setLiveTokens(access, refresh) {
+  if (access) liveAccessToken = access;
+  if (refresh) liveRefreshToken = refresh;
+  process.env.GAPGPT_TOKEN = access;
+  if (refresh) process.env.GAPGPT_REFRESH_TOKEN = refresh;
+}
+
+export function persistTokens(access, refresh) {
+  setLiveTokens(access, refresh);
+
+  const tokenFile = path.join(__dirname, '.token');
+  try {
+    fs.writeFileSync(tokenFile, JSON.stringify({ accessToken: access, refreshToken: refresh || '' }, null, 2), 'utf-8');
+  } catch {}
+
+  const envFile = path.join(__dirname, '.env');
+  if (fs.existsSync(envFile)) {
+    try {
+      let envContent = fs.readFileSync(envFile, 'utf-8');
+      if (/GAPGPT_TOKEN=.*/.test(envContent)) {
+        envContent = envContent.replace(/GAPGPT_TOKEN=.*/, `GAPGPT_TOKEN=${access}`);
+      } else {
+        envContent += `\nGAPGPT_TOKEN=${access}`;
+      }
+
+      if (refresh) {
+        if (/GAPGPT_REFRESH_TOKEN=.*/.test(envContent)) {
+          envContent = envContent.replace(/GAPGPT_REFRESH_TOKEN=.*/, `GAPGPT_REFRESH_TOKEN=${refresh}`);
+        } else {
+          envContent += `\nGAPGPT_REFRESH_TOKEN=${refresh}`;
+        }
+      }
+      fs.writeFileSync(envFile, envContent, 'utf-8');
+    } catch {}
+  }
+}
 
 export function getTokenExpiryInfo() {
   try {
     const token = getAccessToken();
-    const parts = token.split(".");
+    const parts = token.split('.');
     if (parts.length < 2) {
-      return { status: "unknown", error: "Invalid JWT token structure" };
+      return { status: 'unknown', error: 'Invalid JWT token structure' };
     }
-    const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
     const exp = payload.exp ? new Date(payload.exp * 1000) : null;
     const iat = payload.iat ? new Date(payload.iat * 1000) : null;
     const now = new Date();
@@ -63,14 +131,14 @@ export function getTokenExpiryInfo() {
       daysRemaining = Math.max(0, Math.round((diffMs / (1000 * 60 * 60 * 24)) * 10) / 10);
       isExpired = diffMs <= 0;
       if (isExpired) {
-        warning = "توکن منقضی شده است! لطفاً با دستور python gap_chat.py --export-token در ویندوز توکن جدید ایجاد و در سرور قرار دهید.";
+        warning = 'توکن منقضی شده است! لطفاً جهت تمدید از قابلیت auto-renew یا دستور python gap_chat.py --renew استفاده کنید.';
       } else if (daysRemaining < 3) {
-        warning = `توکن در کمتر از ${daysRemaining} روز آینده منقضی خواهد شد. نیاز به تمدید دارد.`;
+        warning = `توکن در کمتر از ${daysRemaining} روز آینده منقضی خواهد شد.`;
       }
     }
 
     return {
-      status: isExpired ? "expired" : (daysRemaining !== null && daysRemaining < 3 ? "expiring_soon" : "active"),
+      status: isExpired ? 'expired' : (daysRemaining !== null && daysRemaining < 3 ? 'expiring_soon' : 'active'),
       issued_at: iat ? iat.toISOString() : null,
       expires_at: exp ? exp.toISOString() : null,
       days_remaining: daysRemaining,
@@ -78,8 +146,176 @@ export function getTokenExpiryInfo() {
       warning: warning
     };
   } catch (err) {
-    return { status: "error", error: err.message };
+    return { status: 'error', error: err.message };
   }
+}
+
+export async function loginWithCredentials(username, password) {
+  const resp = await fetch('https://gapgpt.ir/api/v1/login_password', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'GapGPT-Desktop'
+    },
+    body: JSON.stringify({
+      username: username.toLowerCase().trim(),
+      password: password
+    })
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Login failed (HTTP ${resp.status}): ${errText}`);
+  }
+
+  const data = await resp.json();
+  if (data.status !== 'ok' || !data.access_token) {
+    throw new Error(`Login failed: ${data.message || 'Invalid username or password'}`);
+  }
+
+  persistTokens(data.access_token, data.refresh_token || '');
+  console.log(`✅ [AUTH-LOGIN] Successfully logged in as ${username}. New tokens saved.`);
+  return { status: 'ok', source: 'password_login', tokens: { accessToken: data.access_token, refreshToken: data.refresh_token } };
+}
+
+export async function refreshAccessToken() {
+  const refresh = getRefreshToken();
+
+  if (refresh) {
+    try {
+      const resp = await fetch('https://gapgpt.ir/api/v1/token/refresh', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'GapGPT-Desktop'
+        },
+        body: JSON.stringify({ refresh })
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const newAccess = data.access || data.access_token;
+        const newRefresh = data.refresh || data.refresh_token || refresh;
+        if (newAccess) {
+          persistTokens(newAccess, newRefresh);
+          console.log('✅ [AUTH-RENEW] Successfully renewed GapGPT access token via refresh token.');
+          return { status: 'ok', source: 'refresh_token', tokens: { accessToken: newAccess, refreshToken: newRefresh } };
+        }
+      } else {
+        const err = await resp.text();
+        console.warn(`⚠️ [AUTH-RENEW] Refresh token rejected (HTTP ${resp.status}): ${err}`);
+      }
+    } catch (e) {
+      console.warn(`⚠️ [AUTH-RENEW] Refresh request failed: ${e.message}`);
+    }
+  }
+
+  // Fallback: Login via username and password if provided in environment
+  const username = (process.env.GAPGPT_USERNAME || '').trim();
+  const password = (process.env.GAPGPT_PASSWORD || '').trim();
+  if (username && password) {
+    return await loginWithCredentials(username, password);
+  }
+
+  throw new Error('Cannot renew token: No valid refresh token or credentials (GAPGPT_USERNAME / GAPGPT_PASSWORD) available.');
+}
+
+export async function checkAndAutoRenewToken() {
+  const info = getTokenExpiryInfo();
+  if (info.is_expired || (info.days_remaining !== null && info.days_remaining < 2)) {
+    console.log(`⏰ [AUTO-RENEW] Token is expired or expiring soon (${info.days_remaining} days). Auto-renewing...`);
+    try {
+      return await refreshAccessToken();
+    } catch (err) {
+      console.error(`❌ [AUTO-RENEW] Failed to auto-renew token: ${err.message}`);
+      return { status: 'failed', error: err.message };
+    }
+  }
+  return { status: 'skipped', reason: 'Token is healthy', days_remaining: info.days_remaining };
+}
+
+export async function uploadImageToGapGPT(imageInput) {
+  const token = getAccessToken();
+  let buffer;
+  let filename = `upload-${Date.now()}.png`;
+  let mimeType = 'image/png';
+
+  if (typeof imageInput !== 'string') {
+    throw new Error('Image input must be a string (URL, file path, or data URI / base64)');
+  }
+
+  const trimmed = imageInput.trim();
+
+  // 1. Data URI: data:image/...;base64,...
+  if (trimmed.startsWith('data:image/')) {
+    const matches = trimmed.match(/^data:(image\/[a-zA-Z0-9\+\-\.]+);base64,(.+)$/);
+    if (matches) {
+      mimeType = matches[1];
+      const ext = mimeType.split('/')[1] || 'png';
+      filename = `upload-${Date.now()}.${ext}`;
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      throw new Error('Invalid data URI format');
+    }
+  }
+  // 2. HTTP / HTTPS URL
+  else if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    const res = await fetch(trimmed);
+    if (!res.ok) throw new Error(`Failed to download image from URL (${res.status})`);
+    const arrayBuf = await res.arrayBuffer();
+    buffer = Buffer.from(arrayBuf);
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.startsWith('image/')) {
+      mimeType = contentType;
+      const ext = mimeType.split('/')[1] || 'png';
+      filename = `image-${Date.now()}.${ext}`;
+    }
+  }
+  // 3. Local file path
+  else if (fs.existsSync(trimmed)) {
+    buffer = fs.readFileSync(trimmed);
+    const ext = path.extname(trimmed).toLowerCase().replace('.', '') || 'png';
+    mimeType = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+    filename = path.basename(trimmed);
+  }
+  // 4. Raw base64 string
+  else {
+    try {
+      buffer = Buffer.from(trimmed, 'base64');
+    } catch {
+      throw new Error('Unrecognized image input: Not a valid URL, file path, or base64 data');
+    }
+  }
+
+  const form = new FormData();
+  const blob = new Blob([buffer], { type: mimeType });
+  form.append('file', blob, filename);
+
+  const uploadResp = await fetch('https://gapgpt.ir/api/v1/upload_file', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'User-Agent': 'GapGPT-Desktop'
+    },
+    body: form
+  });
+
+  if (!uploadResp.ok) {
+    const errText = await uploadResp.text();
+    throw new Error(`GapGPT Image Upload failed (HTTP ${uploadResp.status}): ${errText}`);
+  }
+
+  const uploadData = await uploadResp.json();
+  const fileToken = uploadData.token || uploadData.file_token || uploadData.id;
+  if (!fileToken) {
+    throw new Error('No file token returned from GapGPT upload: ' + JSON.stringify(uploadData));
+  }
+
+  return {
+    file_token: fileToken,
+    url: uploadData.url || '',
+    filename: filename
+  };
 }
 
 export function resolveModel(modelName) {
@@ -142,7 +378,7 @@ export async function getQuota() {
 }
 
 // Single websocket attempt
-function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, onChunk, timeoutMs }) {
+function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTokens = [], onChunk, timeoutMs }) {
   const token = getAccessToken();
 
   return new Promise((resolve, reject) => {
@@ -169,11 +405,26 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, onChunk
 
     function tryResolve() {
       if (resolved || !hasAcked) return;
-      const finalText = (fullResponse || streamText).trim();
+      let finalText = (fullResponse || streamText).trim();
       if (!finalText) return;
 
       resolved = true;
       cleanup();
+
+      // Separate any embedded thinking / reasoning
+      let cleanReasoning = reasoning.trim();
+      const thinkMatch = finalText.match(/<thinking>([\s\S]*?)<\/thinking>/i);
+      if (thinkMatch) {
+        cleanReasoning = (cleanReasoning ? cleanReasoning + '\n' : '') + thinkMatch[1].trim();
+        finalText = finalText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
+      }
+
+      const cotMatch = finalText.match(/^(The user (?:is asking|wants|needs)[\s\S]*?(?:Let me|I will|I should)[\s\S]*?\n\n)([\s\S]+)$/i);
+      if (cotMatch && !cleanReasoning) {
+        cleanReasoning = cotMatch[1].trim();
+        finalText = cotMatch[2].trim();
+      }
+
       resolve({
         status: 'ok',
         conversation_id: targetChatToken,
@@ -182,7 +433,7 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, onChunk
         effort: effortConfig.label,
         messages_remaining: messagesRemaining,
         response: finalText,
-        reasoning: reasoning.trim()
+        reasoning: cleanReasoning
       });
     }
 
@@ -217,7 +468,7 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, onChunk
         version: 4,
         text: prompt,
         bot_name: modelConfig.bot_name,
-        file_tokens: [],
+        file_tokens: fileTokens || [],
         allow_downgrade: false,
         enable_user_memory: false,
         mode: modelConfig.mode,
@@ -338,12 +589,29 @@ export async function askGapChat({
   model = 'claude-opus',
   effort = 'high',
   chatId = '',
+  images = [],
   autoFallback = true,
   onChunk = null,
   timeoutMs = 120000
 }) {
   const primaryModelConfig = resolveModel(model);
   const effortConfig = resolveEffort(effort);
+
+  // Upload images if any
+  const fileTokens = [];
+  if (Array.isArray(images) && images.length > 0) {
+    for (const img of images) {
+      if (!img) continue;
+      try {
+        const up = await uploadImageToGapGPT(img);
+        if (up && up.file_token) {
+          fileTokens.push(up.file_token);
+        }
+      } catch (err) {
+        console.warn(`⚠️ [VISION] Image upload skipped: ${err.message}`);
+      }
+    }
+  }
 
   // Fallback candidate chain
   const fallbackCandidates = ['claude-sonnet', 'deepseek'];
@@ -355,6 +623,7 @@ export async function askGapChat({
       modelConfig: primaryModelConfig,
       effortConfig,
       chatId,
+      fileTokens,
       onChunk,
       timeoutMs
     });
@@ -374,6 +643,7 @@ export async function askGapChat({
             modelConfig: fbModelConfig,
             effortConfig: resolveEffort('medium'),
             chatId,
+            fileTokens,
             onChunk,
             timeoutMs: 60000
           });
@@ -441,6 +711,7 @@ if (process.argv[1] && process.argv[1].endsWith('gap_chat.mjs')) {
   let effort = 'high';
   let chatId = '';
   let isJson = false;
+  const images = [];
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--prompt' || args[i] === '-p') {
@@ -451,12 +722,23 @@ if (process.argv[1] && process.argv[1].endsWith('gap_chat.mjs')) {
       effort = args[++i];
     } else if (args[i] === '--chat-id' || args[i] === '-c') {
       chatId = args[++i];
+    } else if (args[i] === '--image' || args[i] === '-i') {
+      images.push(args[++i]);
     } else if (args[i] === '--json') {
       isJson = true;
     } else if (args[i] === '--status' || args[i] === '-s') {
       const info = getTokenExpiryInfo();
       console.log(JSON.stringify(info, null, 2));
       process.exit(0);
+    } else if (args[i] === '--renew' || args[i] === '-r') {
+      refreshAccessToken().then(res => {
+        console.log(JSON.stringify(res, null, 2));
+        process.exit(0);
+      }).catch(err => {
+        console.error('Renew error:', err.message);
+        process.exit(1);
+      });
+      break;
     } else if (args[i] === '--quota' || args[i] === '-q') {
       getQuota().then(res => {
         console.log(JSON.stringify(res, null, 2));
@@ -489,13 +771,14 @@ if (process.argv[1] && process.argv[1].endsWith('gap_chat.mjs')) {
     }
   }
 
-  if (prompt) {
+  if (prompt || images.length > 0) {
     let printedStream = false;
     askGapChat({
-      prompt,
+      prompt: prompt || 'Analyze this image',
       model,
       effort,
       chatId,
+      images,
       onChunk: isJson ? null : (chunk) => {
         printedStream = true;
         process.stdout.write(chunk);

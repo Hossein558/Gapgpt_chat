@@ -46,17 +46,19 @@
 
 ## 🛠 ابزارهای ارائه‌شده در سرور MCP
 
-وقتی سرور را در اجنت رجیستر می‌کنید، ۵ ابزار زیر در دسترس اجنت قرار می‌گیرد:
+وقتی سرور را در اجنت رجیستر می‌کنید، ۶ ابزار زیر در دسترس اجنت قرار می‌گیرد:
 
 1. **`ask_gapgpt_chat`**:
-   ارسال درخواست به چت گپ و دریافت پاسخ همراه با شناسه مکالمه (با پشتیبانی از fallback و تعیین مدل و سطح تفکر).
+   ارسال درخواست به چت گپ و دریافت پاسخ همراه با شناسه مکالمه (با پشتیبانی از fallback، تعیین مدل، سطح تفکر عمیق و **پردازش چندوجهی تصویر Multimodal/Vision**).
 2. **`get_gapgpt_quota`**:
    استعلام وضعیت سهمیه چت، محدودیت‌های ۳ ساعته و روزانه.
 3. **`get_gapgpt_auth_status`**:
    بررسی وضعیت اعتبار توکن، تاریخ انقضا و روزهای باقی‌مانده.
-4. **`get_gapgpt_chat_history`**:
+4. **`renew_gapgpt_token`**:
+   تمدید خودکار توکن احراز هویت با استفاده از Refresh Token یا اطلاعات حساب کاربری.
+5. **`get_gapgpt_chat_history`**:
    مشاهده و بازخوانی تاریخچه پیام‌های یک چت خاص با `conversation_id`.
-5. **`list_gapgpt_recent_chats`**:
+6. **`list_gapgpt_recent_chats`**:
    فهرست‌گیری از آخرین گفتگوهای ثبت‌شده در حساب کاربر.
 
 ---
@@ -175,38 +177,81 @@ docker compose up -d --build
 
 ---
 
-## ⏰ مانیتورینگ و تمدید خودکار توکن (Token Expiry & Status)
+## 🔄 اتوماسیون کامل تمدید توکن (Automated Headless Token Renewal)
 
-توکن‌های GapGPT به صورت JWT با تاریخ انقضا صادر می‌شوند (معمولاً اعتبارهای چندروزه). با استفاده از قابلیت‌های نسخه جدید می‌توانید وضعیت اعتبار توکن را بررسی کنید:
+در نسخه **v1.4.0**، سیستم به دو سازوکار خودکار برای تمدید توکن بدون نیاز به مداخله دستی مجهز شده است:
 
-### ۱. استعلام وضعیت انقضای توکن از طریق وب‌سرویس:
+### ۱. تمدید کاملاً خودکار در پس‌زمینه (Zero-Touch Background Renewal)
+- سرور HTTP به طور خودکار هر ۳۰ دقیقه یک‌بار اعتبار توکن را بررسی می‌کند.
+- اگر کمتر از ۲ روز به انقضای توکن باقی مانده باشد، سرور به طور مستقل با اندپوینت استاندارد `https://gapgpt.ir/api/v1/token/refresh` توکن جدید را دریافت کرده، حافظه فعال و فایل‌های `.env` و `.token` را به‌روزرسانی می‌کند.
+
+### ۲. اتصال با نام‌کاربری و رمز عبور (Headless Password Fallback)
+می‌توانید متغیرهای زیر را در `.env` قرار دهید تا در صورت باطل شدن سشن، سرور مستقیماً وارد حساب شده و توکن‌های جدید دریافت کند:
+```env
+GAPGPT_USERNAME="your_email_or_username"
+GAPGPT_PASSWORD="your_password"
+```
+
+### ۳. تمدید دستی / On-Demand از طریق API و خط فرمان:
 ```bash
-curl -s https://gapgpt.desktopcenter.ir/auth/status \
+# از طریق اندپوینت وب‌سرویس:
+curl -X POST https://gapgpt.desktopcenter.ir/auth/renew \
   -H "Authorization: Bearer your_secret_api_key_here"
-```
-خروجی نمونه:
-```json
-{
-  "status": "active",
-  "issued_at": "2026-11-08T10:23:03.000Z",
-  "expires_at": "2026-11-16T10:23:03.000Z",
-  "days_remaining": 7.9,
-  "is_expired": false,
-  "warning": null
-}
-```
 
-### ۲. استعلام با خط فرمان:
-```bash
-python gap_chat.py --status
+# از طریق خط فرمان:
+python gap_chat.py --renew
 # یا
-node gap_chat.mjs --status
+node gap_chat.mjs --renew
 ```
 
-### ۳. تمدید توکن پس از انقضا:
-در سیستم ویندوزی خود که اپلیکیشن GapGPT Desktop در آن لاگین است، دستور زیر را اجرا کرده و مقدار توکن را در `.env` سرور جایگزین و کانتینر را ریستارت کنید:
+---
+
+## 👁️ پردازش چندوجهی تصویر (Multimodal / Vision Support)
+
+مدل‌های برتر چت مانند **Claude Opus 5.5**, **Claude Sonnet 5.5** و **GPT-6 Astra** اکنون از طریق این پل از **پردازش مستقیم تصویر** پشتیبانی می‌کنند:
+
+### ۱. ارسال تصویر در استاندارد OpenAI (`/v1/chat/completions`):
+می‌توانید تصاویر را به صورت لینک اینترنتی (`https://...`) یا Base64 Data URI ارسال کنید:
 ```bash
-python gap_chat.py --export-token
+curl -X POST https://gapgpt.desktopcenter.ir/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_secret_api_key_here" \
+  -d '{
+    "model": "claude-opus",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "این نمودار معماری را تحلیل کن و نقاط ضعف امنیتی آن را بگو"},
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/architecture.png"
+            }
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+### ۲. ارسال تصویر در اندپوینت مستقیم (`/ask`):
+```bash
+curl -X POST https://gapgpt.desktopcenter.ir/ask \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_secret_api_key_here" \
+  -d '{
+    "prompt": "متن موجود در این اسکرین‌شات ارور را بخوان و روش رفع آن را بگو",
+    "model": "claude-opus",
+    "images": [
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+    ]
+  }'
+```
+
+### ۳. ارسال تصویر در خط فرمان (CLI):
+```bash
+python gap_chat.py -p "این نمودار را تحلیل کن" -i "./architecture.png" -m claude-opus
 ```
 
 ---

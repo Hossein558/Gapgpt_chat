@@ -1,5 +1,13 @@
 import readline from 'readline';
-import { askGapChat, getChatHistory, listRecentChats, getQuota, resolveModel, getTokenExpiryInfo } from './gap_chat.mjs';
+import {
+  askGapChat,
+  getChatHistory,
+  listRecentChats,
+  getQuota,
+  resolveModel,
+  getTokenExpiryInfo,
+  refreshAccessToken
+} from './gap_chat.mjs';
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -49,7 +57,7 @@ rl.on('line', async (line) => {
       },
       serverInfo: {
         name: 'gapgpt-chat-bridge',
-        version: '1.3.0'
+        version: '1.4.0'
       }
     });
   }
@@ -70,8 +78,16 @@ rl.on('line', async (line) => {
           }
         },
         {
+          name: 'renew_gapgpt_token',
+          description: 'Trigger automated renewal of the GapGPT access token using the stored refresh token or credentials.',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
           name: 'ask_gapgpt_chat',
-          description: 'Ask a question or delegate a task to GapGPT Chat (Claude Opus 5.5, Sonnet 5.5, GPT-6, DeepSeek) using your unused Chat subscription quota to save Agent tokens. Supports reasoning effort levels (high/deep, medium, low/fast) and returns the answer and the Conversation ID. If chat quota is exceeded, automatically attempts lighter fallback models or returns fallback_required: true instructing the agent to proceed on its own.',
+          description: 'Ask a question, analyze code, or process images (Multimodal / Vision) with GapGPT Chat (Claude Opus 5.5, Sonnet 5.5, GPT-6, DeepSeek) using your unused Chat subscription quota to save Agent tokens. Supports reasoning effort levels (high/deep, medium, low/fast) and image inputs (URLs or base64 data URIs).',
           inputSchema: {
             type: 'object',
             properties: {
@@ -89,9 +105,14 @@ rl.on('line', async (line) => {
                 enum: ['high', 'medium', 'low', 'deep', 'thoughtful', 'quick', 'عمیق', 'متفکر', 'سریع'],
                 description: 'Reasoning effort level. Default is "high" (عمیق / Deep thinking for Claude Opus).'
               },
+              images: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional array of image URLs or base64 data URIs for Multimodal / Vision analysis.'
+              },
               conversation_id: {
                 type: 'string',
-                description: 'Optional Conversation ID (chat_token). If specified, continues the discussion in that conversation thread; if omitted, starts a new conversation.'
+                description: 'Optional Conversation ID (chat_token) to continue the discussion in that thread.'
               },
               auto_fallback: {
                 type: 'boolean',
@@ -153,11 +174,23 @@ rl.on('line', async (line) => {
             }
           ]
         });
+      } else if (name === 'renew_gapgpt_token') {
+        const ren = await refreshAccessToken();
+        const info = getTokenExpiryInfo();
+        return sendResponse(id, {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ status: 'ok', renewal: ren, token_info: info }, null, 2)
+            }
+          ]
+        });
       } else if (name === 'ask_gapgpt_chat') {
         const result = await askGapChat({
           prompt: args.prompt,
           model: args.model || 'claude-opus',
           effort: args.effort || 'high',
+          images: args.images || [],
           chatId: args.conversation_id || '',
           autoFallback: args.auto_fallback !== false
         });

@@ -11,18 +11,32 @@ class DATA_BLOB(ctypes.Structure):
         ("pbData", ctypes.POINTER(ctypes.c_byte))
     ]
 
-def get_gapgpt_access_token():
-    # 1. Environment variable (Linux, Docker, Cloud)
-    if os.environ.get("GAPGPT_TOKEN"):
-        return os.environ["GAPGPT_TOKEN"].strip()
+def get_gapgpt_tokens():
+    # 1. Environment variables (Linux, Docker, Cloud)
+    access = os.environ.get("GAPGPT_TOKEN")
+    refresh = os.environ.get("GAPGPT_REFRESH_TOKEN")
+    if access and access.strip():
+        return {
+            "accessToken": access.strip(),
+            "refreshToken": (refresh or "").strip()
+        }
 
     # 2. Local token file (.token)
     token_file = os.path.join(os.path.dirname(__file__), ".token")
     if os.path.exists(token_file):
-        with open(token_file, "r", encoding="utf-8") as f:
-            t = f.read().strip()
-            if t:
-                return t
+        try:
+            with open(token_file, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content.startswith("{"):
+                    data = json.loads(content)
+                    return {
+                        "accessToken": data.get("accessToken") or data.get("access") or "",
+                        "refreshToken": data.get("refreshToken") or data.get("refresh") or ""
+                    }
+                elif content:
+                    return { "accessToken": content, "refreshToken": "" }
+        except Exception:
+            pass
 
     # 3. Windows DPAPI extraction (Windows Desktop)
     if sys.platform != "win32":
@@ -77,12 +91,25 @@ def get_gapgpt_access_token():
     aesgcm = AESGCM(master_key)
     decrypted = aesgcm.decrypt(nonce, payload + tag, None)
     parsed = json.loads(decrypted.decode("utf-8"))
-    return parsed.get("accessToken")
+
+    return {
+        "accessToken": parsed.get("accessToken") or parsed.get("access") or "",
+        "refreshToken": parsed.get("refreshToken") or parsed.get("refresh") or "",
+        "authCookie": parsed.get("authCookie") or ""
+    }
+
+def get_gapgpt_access_token():
+    tokens = get_gapgpt_tokens()
+    return tokens.get("accessToken", "")
 
 if __name__ == "__main__":
     try:
-        t = get_gapgpt_access_token()
-        print(t)
+        if "--json" in sys.argv:
+            tokens = get_gapgpt_tokens()
+            print(json.dumps(tokens, indent=2))
+        else:
+            t = get_gapgpt_access_token()
+            print(t)
     except Exception as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)

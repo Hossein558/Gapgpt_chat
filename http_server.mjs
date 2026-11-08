@@ -1,5 +1,13 @@
 import http from 'http';
-import { askGapChat, getQuota, listRecentChats, getChatHistory, getTokenExpiryInfo } from './gap_chat.mjs';
+import {
+  askGapChat,
+  getQuota,
+  listRecentChats,
+  getChatHistory,
+  getTokenExpiryInfo,
+  refreshAccessToken,
+  checkAndAutoRenewToken
+} from './gap_chat.mjs';
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -10,6 +18,15 @@ if (!BRIDGE_API_KEY) {
 } else {
   console.log('🔒 Security enabled: Protected endpoints require Authorization: Bearer <API_KEY>');
 }
+
+// Background Auto-Renewal check every 30 minutes
+setInterval(async () => {
+  try {
+    await checkAndAutoRenewToken();
+  } catch (err) {
+    console.error('Background auto-renew check error:', err.message);
+  }
+}, 30 * 60 * 1000);
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -69,8 +86,9 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, {
       status: 'ok',
       service: 'GapGPT-Bridge-HTTP',
-      version: '1.3.0',
+      version: '1.4.0',
       auth_enabled: !!BRIDGE_API_KEY,
+      features: ['openai-compatible', 'streaming-sse', 'multimodal-vision', 'auto-token-renew'],
       timestamp: new Date().toISOString()
     });
   }
@@ -93,37 +111,80 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, info);
     }
 
+    // Explicit Token Renewal endpoint
+    if (pathname === '/auth/renew' && req.method === 'POST') {
+      try {
+        const ren = await refreshAccessToken();
+        const info = getTokenExpiryInfo();
+        return sendJson(res, 200, {
+          status: 'ok',
+          message: 'Token renewed successfully',
+          renewal: ren,
+          token_info: info
+        });
+      } catch (err) {
+        return sendJson(res, 500, {
+          error: {
+            message: 'Token renewal failed: ' + err.message,
+            type: 'token_renewal_error'
+          }
+        });
+      }
+    }
+
     // Quota check
     if (pathname === '/quota' && req.method === 'GET') {
       const quota = await getQuota();
       return sendJson(res, 200, quota);
     }
 
-    // Direct Ask endpoint
+    // Direct Ask endpoint (Supports prompt and images array)
     if (pathname === '/ask' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const { prompt, model, effort, conversation_id } = body;
-      if (!prompt) {
-        return sendJson(res, 400, { error: 'Missing required field: prompt' });
+      const { prompt, model, effort, conversation_id, images } = body;
+      if (!prompt && (!images || images.length === 0)) {
+        return sendJson(res, 400, { error: 'Missing required field: prompt or images' });
       }
       const result = await askGapChat({
-        prompt,
+        prompt: prompt || 'Analyze this image',
         model: model || 'claude-opus',
         effort: effort || 'high',
-        chatId: conversation_id || ''
+        chatId: conversation_id || '',
+        images: images || []
       });
       return sendJson(res, 200, result);
     }
 
-    // OpenAI-compatible Chat Completions (/v1/chat/completions)
+    // OpenAI-compatible Chat Completions (/v1/chat/completions with Multimodal / Vision)
     if (pathname === '/v1/chat/completions' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const messages = body.messages || [];
       const model = body.model || 'claude-opus';
-      const prompt = messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
 
-      if (!prompt.trim()) {
-        return sendJson(res, 400, { error: 'No prompt or messages provided' });
+      // Parse multimodal messages (extract text and image_url)
+      const promptParts = [];
+      const images = [];
+
+      for (const m of messages) {
+        const role = m.role || 'user';
+        if (typeof m.content === 'string') {
+          promptParts.push(`${role}: ${m.content}`);
+        } else if (Array.isArray(m.content)) {
+          for (const part of m.content) {
+            if (part.type === 'text' && part.text) {
+              promptParts.push(`${role}: ${part.text}`);
+            } else if (part.type === 'image_url') {
+              const url = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
+              if (url) images.push(url);
+            }
+          }
+        }
+      }
+
+      const prompt = promptParts.join('\n\n') || (images.length > 0 ? 'Analyze the attached image(s)' : '');
+
+      if (!prompt.trim() && images.length === 0) {
+        return sendJson(res, 400, { error: 'No prompt, messages, or images provided' });
       }
 
       // Handle Streaming (SSE)
@@ -161,6 +222,7 @@ const server = http.createServer(async (req, res) => {
             prompt,
             model,
             effort: 'high',
+            images,
             onChunk
           });
 
@@ -190,7 +252,8 @@ const server = http.createServer(async (req, res) => {
       const result = await askGapChat({
         prompt,
         model,
-        effort: 'high'
+        effort: 'high',
+        images
       });
 
       return sendJson(res, 200, {
@@ -216,6 +279,7 @@ const server = http.createServer(async (req, res) => {
         gapgpt_meta: {
           conversation_id: result.conversation_id,
           effort: result.effort,
+          images_count: images.length,
           fallback_used: result.fallback_used || false
         }
       });
@@ -226,10 +290,10 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         object: 'list',
         data: [
-          { id: 'claude-opus', object: 'model', name: 'Claude Opus 5.5' },
-          { id: 'claude-sonnet', object: 'model', name: 'Claude Sonnet 5.5' },
+          { id: 'claude-opus', object: 'model', name: 'Claude Opus 5.5 (Vision & Deep Reasoning)' },
+          { id: 'claude-sonnet', object: 'model', name: 'Claude Sonnet 5.5 (Vision)' },
           { id: 'claude-fable', object: 'model', name: 'Claude Fable 5' },
-          { id: 'gpt-6-astra', object: 'model', name: 'GPT-6 Astra' },
+          { id: 'gpt-6-astra', object: 'model', name: 'GPT-6 Astra (Vision)' },
           { id: 'gpt-terra', object: 'model', name: 'GPT-6.1 Terra' },
           { id: 'deepseek', object: 'model', name: 'DeepSeek' }
         ]
