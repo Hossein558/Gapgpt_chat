@@ -20,3 +20,7 @@ desktop-auth.secure.json
 Local State
 tokens.json
 .token
+run_remote.py
+askpass.bat
+deploy_remote.py
+test_remote_http.py
