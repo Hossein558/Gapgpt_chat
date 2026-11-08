@@ -1,0 +1,205 @@
+import readline from 'readline';
+import { askGapChat, getChatHistory, listRecentChats, getQuota, resolveModel } from './gap_chat.mjs';
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+function sendResponse(id, result) {
+  const message = {
+    jsonrpc: '2.0',
+    id: id,
+    result: result
+  };
+  process.stdout.write(JSON.stringify(message) + '\n');
+}
+
+function sendError(id, code, message, data = null) {
+  const response = {
+    jsonrpc: '2.0',
+    id: id,
+    error: {
+      code: code,
+      message: message,
+      ...(data ? { data } : {})
+    }
+  };
+  process.stdout.write(JSON.stringify(response) + '\n');
+}
+
+rl.on('line', async (line) => {
+  if (!line.trim()) return;
+
+  let request;
+  try {
+    request = JSON.parse(line);
+  } catch (e) {
+    return;
+  }
+
+  const { id, method, params } = request;
+
+  if (method === 'initialize') {
+    return sendResponse(id, {
+      protocolVersion: '2024-11-05',
+      capabilities: {
+        tools: {}
+      },
+      serverInfo: {
+        name: 'gapgpt-chat-bridge',
+        version: '1.1.0'
+      }
+    });
+  }
+
+  if (method === 'notifications/initialized') {
+    return;
+  }
+
+  if (method === 'tools/list') {
+    return sendResponse(id, {
+      tools: [
+        {
+          name: 'ask_gapgpt_chat',
+          description: 'Ask a question or delegate a task to GapGPT Chat (Claude Opus 5.5, Sonnet 5.5, GPT-6, DeepSeek) using your unused Chat subscription quota to save Agent tokens. Supports reasoning effort levels (high/deep, medium, low/fast) and returns the answer and the Conversation ID. If chat quota is exceeded, automatically attempts lighter fallback models or returns fallback_required: true instructing the agent to proceed on its own.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              prompt: {
+                type: 'string',
+                description: 'The question, prompt, or technical content to process in GapGPT Chat.'
+              },
+              model: {
+                type: 'string',
+                enum: ['claude-opus', 'claude-sonnet', 'claude-fable', 'gpt-6-astra', 'gpt-terra', 'deepseek', 'gemini'],
+                description: 'The model to use in Chat. Default is claude-opus (Claude Opus 5.5).'
+              },
+              effort: {
+                type: 'string',
+                enum: ['high', 'medium', 'low', 'deep', 'thoughtful', 'quick', 'عمیق', 'متفکر', 'سریع'],
+                description: 'Reasoning effort level. Default is "high" (عمیق / Deep thinking for Claude Opus).'
+              },
+              conversation_id: {
+                type: 'string',
+                description: 'Optional Conversation ID (chat_token). If specified, continues the discussion in that conversation thread; if omitted, starts a new conversation.'
+              },
+              auto_fallback: {
+                type: 'boolean',
+                description: 'Whether to automatically fall back to Claude Sonnet or DeepSeek if Opus quota is exceeded. Default is true.'
+              }
+            },
+            required: ['prompt']
+          }
+        },
+        {
+          name: 'get_gapgpt_quota',
+          description: 'Check your current GapGPT Chat subscription status, rate limits, 3-hour limits, and daily quotas.',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'get_gapgpt_chat_history',
+          description: 'Retrieve the messages and conversation history from a GapGPT chat by its Conversation ID.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              conversation_id: {
+                type: 'string',
+                description: 'The Conversation ID (chat_token) to inspect.'
+              }
+            },
+            required: ['conversation_id']
+          }
+        },
+        {
+          name: 'list_gapgpt_recent_chats',
+          description: 'List recent chat conversations in your GapGPT account with their Conversation IDs and titles.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              limit: {
+                type: 'number',
+                description: 'Number of recent chats to return (default 10).'
+              }
+            }
+          }
+        }
+      ]
+    });
+  }
+
+  if (method === 'tools/call') {
+    const { name, arguments: args } = params || {};
+    try {
+      if (name === 'ask_gapgpt_chat') {
+        const result = await askGapChat({
+          prompt: args.prompt,
+          model: args.model || 'claude-opus',
+          effort: args.effort || 'high',
+          chatId: args.conversation_id || '',
+          autoFallback: args.auto_fallback !== false
+        });
+        return sendResponse(id, {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        });
+      } else if (name === 'get_gapgpt_quota') {
+        const quota = await getQuota();
+        return sendResponse(id, {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(quota, null, 2)
+            }
+          ]
+        });
+      } else if (name === 'get_gapgpt_chat_history') {
+        const hist = await getChatHistory(args.conversation_id);
+        return sendResponse(id, {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(hist, null, 2)
+            }
+          ]
+        });
+      } else if (name === 'list_gapgpt_recent_chats') {
+        const list = await listRecentChats(args.limit || 10);
+        return sendResponse(id, {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(list, null, 2)
+            }
+          ]
+        });
+      } else {
+        return sendError(id, -32601, `Unknown tool: ${name}`);
+      }
+    } catch (err) {
+      return sendResponse(id, {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: `Error executing ${name}: ${err.message}`
+          }
+        ]
+      });
+    }
+  }
+
+  if (method === 'ping') {
+    return sendResponse(id, {});
+  }
+
+  sendError(id, -32601, `Method not found: ${method}`);
+});

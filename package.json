@@ -1,0 +1,22 @@
+{
+  "name": "gapgpt-chat-bridge",
+  "version": "1.1.0",
+  "description": "Bridge and Model Context Protocol (MCP) server connecting AI Agents (GapCode, Antigravity, Claude Desktop) to GapGPT Chat to offload reasoning tasks and save Agent tokens.",
+  "main": "gap_chat.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node gapgpt_mcp.mjs",
+    "chat": "node gap_chat.mjs",
+    "quota": "node gap_chat.mjs --quota"
+  },
+  "keywords": [
+    "gapgpt",
+    "mcp",
+    "model-context-protocol",
+    "claude-opus",
+    "ai-agent",
+    "token-saving"
+  ],
+  "author": "Hossein558",
+  "license": "MIT"
+}
