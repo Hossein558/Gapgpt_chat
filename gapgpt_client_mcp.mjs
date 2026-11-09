@@ -11,6 +11,7 @@ const API_KEY = process.env.BRIDGE_API_KEY || 'gapgpt_live_sk_7f8d9b1a4c02';
 
 // Confidential Conversation IDs (Exclusion List)
 const EXCLUSIONS_FILE = path.join(__dirname, 'exclusions.json');
+const GLOBAL_EXCLUSIONS_FILE = '/root/.gemini/config/gapgpt_excluded_conversations.json';
 let defaultExcludedIds = [
   '5e07464b-76f3-42d5-a404-68b6a7e6b7cc',
   '388ebb05-83bc-4615-a0d3-0168772d3efe',
@@ -20,28 +21,49 @@ let defaultExcludedIds = [
 
 function getExcludedConversationIds() {
   const ids = [...defaultExcludedIds];
-  try {
-    if (fs.existsSync(EXCLUSIONS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(EXCLUSIONS_FILE, 'utf-8'));
-      if (Array.isArray(data.excluded_conversation_ids)) {
-        for (const id of data.excluded_conversation_ids) {
-          if (!ids.includes(id)) ids.push(id);
+  const candidates = [EXCLUSIONS_FILE, GLOBAL_EXCLUSIONS_FILE];
+  for (const file of candidates) {
+    try {
+      if (fs.existsSync(file)) {
+        const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        if (Array.isArray(data.excluded_conversation_ids)) {
+          for (const id of data.excluded_conversation_ids) {
+            if (!ids.includes(id)) ids.push(id);
+          }
         }
       }
-    }
-  } catch (e) {}
+    } catch (e) {}
+  }
   return ids;
 }
 
 function checkExclusion(payload) {
-  if (!payload) return null;
-  const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
   const excluded = getExcludedConversationIds();
-  for (const id of excluded) {
-    if (str.includes(id)) {
-      return id;
+
+  // 1. Check direct payload
+  if (payload) {
+    const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    for (const id of excluded) {
+      if (str.includes(id)) {
+        return id;
+      }
     }
   }
+
+  // 2. Check Antigravity process environment variables
+  const envConvId = process.env.ANTIGRAVITY_CONVERSATION_ID;
+  if (envConvId && excluded.includes(envConvId.trim())) {
+    return envConvId.trim();
+  }
+
+  if (process.env.ANTIGRAVITY_SOURCE_METADATA) {
+    for (const id of excluded) {
+      if (process.env.ANTIGRAVITY_SOURCE_METADATA.includes(id)) {
+        return id;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -51,12 +73,15 @@ function addExcludedId(newId) {
   const current = getExcludedConversationIds();
   if (!current.includes(cleanId)) {
     current.push(cleanId);
-    try {
-      fs.writeFileSync(EXCLUSIONS_FILE, JSON.stringify({
-        description: "List of confidential Antigravity Conversation IDs that are strictly forbidden from being delegated or sent to GapGPT.",
-        excluded_conversation_ids: current
-      }, null, 2), 'utf-8');
-    } catch (e) {}
+    const content = JSON.stringify({
+      description: "List of confidential Antigravity Conversation IDs that are strictly forbidden from being delegated or sent to GapGPT.",
+      excluded_conversation_ids: current
+    }, null, 2);
+    for (const f of [EXCLUSIONS_FILE, GLOBAL_EXCLUSIONS_FILE]) {
+      try {
+        fs.writeFileSync(f, content, 'utf-8');
+      } catch (e) {}
+    }
   }
   return current;
 }

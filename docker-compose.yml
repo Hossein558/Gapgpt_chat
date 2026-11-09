@@ -13,3 +13,5 @@ services:
       - BRIDGE_API_KEY=${BRIDGE_API_KEY}
       - PORT=8080
       - HOST=0.0.0.0
+    volumes:
+      - /opt/gapgpt-bridge/exclusions.json:/app/exclusions.json:ro

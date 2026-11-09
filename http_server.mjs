@@ -209,7 +209,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
 
       // Enforce Exclusion Firewall Check
-      const blockedId = checkExclusion(body);
+      const headerConvId = req.headers['x-antigravity-conversation-id'] || req.headers['x-conversation-id'] || '';
+      const blockedId = checkExclusion(body) || checkExclusion(headerConvId);
       if (blockedId) {
         return sendJson(res, 403, {
           error: {
@@ -240,7 +241,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
 
       // Enforce Exclusion Firewall Check
-      const blockedId = checkExclusion(body);
+      const headerConvId = req.headers['x-antigravity-conversation-id'] || req.headers['x-conversation-id'] || '';
+      const blockedId = checkExclusion(body) || checkExclusion(headerConvId);
       if (blockedId) {
         return sendJson(res, 403, {
           error: {

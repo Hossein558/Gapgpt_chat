@@ -549,6 +549,13 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
             if (data.text) {
               streamText += data.text;
               if (onChunk) onChunk(data.text);
+              // Keep stream alive: reset to idle timeout while chunks are arriving
+              if (timer) clearTimeout(timer);
+              timer = setTimeout(() => {
+                if (!resolved) {
+                  tryResolve();
+                }
+              }, 45000);
             }
             if (data.done) {
               chunkDone = true;
@@ -608,6 +615,7 @@ export async function askGapChat({
 }) {
   const primaryModelConfig = resolveModel(model);
   const effortConfig = resolveEffort(effort);
+  const effectiveTimeout = (timeoutMs === 120000 && (effort === 'deep' || effort === 'thoughtful')) ? 300000 : timeoutMs;
 
   // Upload images if any
   const fileTokens = [];
@@ -637,7 +645,7 @@ export async function askGapChat({
       chatId,
       fileTokens,
       onChunk,
-      timeoutMs
+      timeoutMs: effectiveTimeout
     });
 
     if (res.status === 'ok') {
