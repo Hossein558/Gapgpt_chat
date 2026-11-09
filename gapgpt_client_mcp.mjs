@@ -272,7 +272,7 @@ rl.on('line', async (line) => {
               prompt: { type: 'string', description: 'The prompt or problem description to process.' },
               model: {
                 type: 'string',
-                enum: ['claude-opus', 'claude-sonnet', 'claude-fable', 'gpt-6-astra', 'gpt-terra', 'deepseek', 'gemini'],
+                enum: ['claude-opus', 'claude-sonnet', 'claude-fable', 'claude-haiku', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-terra', 'gpt-6-luna', 'deepseek', 'kimi-3', 'glm-5.3', 'grok-4.6', 'gapgpt-qwen-3.6', 'gemini'],
                 description: 'The model to use in Chat (default: claude-opus).'
               },
               effort: {
@@ -306,7 +306,7 @@ rl.on('line', async (line) => {
               },
               model: {
                 type: 'string',
-                enum: ['gpt-6-astra', 'claude-opus-4-8', 'gpt-6.1-terra', 'deepseek-v4.1-flash', 'kimi-for-coding', 'gapgpt-qwen-thinking'],
+                enum: ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'kimi-3', 'glm-5.3', 'deepseek-v4.1-flash', 'grok-4.6', 'claude-fable-5', 'claude-opus-5-5', 'gapgpt-qwen-3.6', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
                 description: 'Model to use for task execution. Default is "gpt-6-astra".'
               },
               timeout_seconds: {

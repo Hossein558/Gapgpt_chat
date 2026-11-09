@@ -97,7 +97,7 @@ rl.on('line', async (line) => {
               },
               model: {
                 type: 'string',
-                enum: ['claude-opus', 'claude-sonnet', 'claude-fable', 'gpt-6-astra', 'gpt-terra', 'deepseek', 'gemini'],
+                enum: ['claude-opus', 'claude-sonnet', 'claude-fable', 'claude-haiku', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-terra', 'gpt-6-luna', 'deepseek', 'kimi-3', 'glm-5.3', 'grok-4.6', 'gapgpt-qwen-3.6', 'gemini'],
                 description: 'The model to use in Chat. Default is claude-opus (Claude Opus 5.5).'
               },
               effort: {
