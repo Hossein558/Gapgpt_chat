@@ -86,6 +86,8 @@ function saveSessionStore() {
 loadSessionStore();
 
 function extractConversationKey(req, body) {
+  if (isInternalTask(body)) return null;
+
   const headerChatId = req.headers['x-openwebui-chat-id'] || req.headers['x-chat-id'] || req.headers['x-conversation-id'];
   if (headerChatId && typeof headerChatId === 'string' && headerChatId.trim()) {
     return headerChatId.trim();
@@ -107,6 +109,53 @@ function extractConversationKey(req, body) {
       return 'conv_' + crypto.createHash('sha256').update(raw.trim()).digest('hex').slice(0, 24);
     }
   }
+  return null;
+}
+
+function isInternalTask(body) {
+  if (body.metadata?.task) return true;
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  if (messages.length === 1) {
+    const content = typeof messages[0].content === 'string' ? messages[0].content : '';
+    if (content.startsWith('### Task:') || 
+        content.includes('Generate 1-3 broad tags') || 
+        content.includes('Generate a concise, 3-5 word title') || 
+        content.includes('Predict 3-5 useful messages') ||
+        content.includes('Suggest follow-up')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function handleInternalTask(body) {
+  const taskMeta = (body.metadata?.task || '').toLowerCase();
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const taskContent = messages.map(m => typeof m.content === 'string' ? m.content : '').join(' ');
+
+  // 1. Title Generation Task
+  if (taskMeta.includes('title') || taskContent.includes('Generate a concise, 3-5 word title') || (taskContent.startsWith('### Task:') && taskContent.toLowerCase().includes('title'))) {
+    let title = 'تطبیق و بهینه‌سازی اسکریپت Jira';
+    if (taskContent.includes('Participant Teams') || taskContent.includes('ScriptRunner')) {
+      title = 'بروزرسانی Participant Teams در Jira';
+    } else if (taskContent.includes('SQL') || taskContent.includes('DatabaseUtil')) {
+      title = 'بهینه‌سازی کوئری SQL در اسکریپت';
+    } else if (taskContent.includes('Portfolio Epic')) {
+      title = 'پردازش Portfolio Epic در Jira';
+    }
+    return title;
+  }
+
+  // 2. Tags Generation Task
+  if (taskMeta.includes('tags') || taskContent.includes('Generate 1-3 broad tags') || (taskContent.startsWith('### Task:') && taskContent.toLowerCase().includes('tag'))) {
+    return '["Jira", "ScriptRunner", "Groovy", "SQL"]';
+  }
+
+  // 3. Follow-up / Prediction Generation Task
+  if (taskMeta.includes('follow_up') || taskContent.includes('Predict 3-5 useful messages') || (taskContent.startsWith('### Task:') && taskContent.toLowerCase().includes('predict'))) {
+    return '1. آیا ساختار SQL با دیتابیس همخوانی دارد؟\n2. رفتار کد در حالت DRY_RUN چگونه ارزیابی می‌شود؟\n3. نحوه مدیریت خطاها و لاگ‌ها در Production چیست؟';
+  }
+
   return null;
 }
 
@@ -299,6 +348,53 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      // Intercept Open WebUI background utility tasks (Title, Tags, Follow-ups) to prevent creating extra GapGPT sessions and burning quota
+      const internalResult = handleInternalTask(body);
+      if (internalResult !== null) {
+        if (body.stream) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*'
+          });
+          const chatId = `chatcmpl-${Date.now()}`;
+          const chunk = {
+            id: chatId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model || 'claude-opus',
+            choices: [{ index: 0, delta: { content: internalResult }, finish_reason: null }]
+          };
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          const doneChunk = {
+            id: chatId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model || 'claude-opus',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+          };
+          res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        } else {
+          return sendJson(res, 200, {
+            id: `chatcmpl-${Date.now()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model || 'claude-opus',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: internalResult },
+                finish_reason: 'stop'
+              }
+            ],
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+          });
+        }
+      }
+
       const { prompt, model, effort, conversation_id, images } = body;
       if (!prompt && (!images || images.length === 0)) {
         return sendJson(res, 400, { error: 'Missing required field: prompt or images' });
@@ -329,6 +425,53 @@ const server = http.createServer(async (req, res) => {
             excluded_id: blockedId
           }
         });
+      }
+
+      // Intercept Open WebUI background utility tasks (Title, Tags, Follow-ups) to prevent creating extra GapGPT sessions and burning quota
+      const internalResult = handleInternalTask(body);
+      if (internalResult !== null) {
+        if (body.stream) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*'
+          });
+          const chatId = `chatcmpl-${Date.now()}`;
+          const chunk = {
+            id: chatId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model || 'claude-opus',
+            choices: [{ index: 0, delta: { content: internalResult }, finish_reason: null }]
+          };
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          const doneChunk = {
+            id: chatId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model || 'claude-opus',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+          };
+          res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        } else {
+          return sendJson(res, 200, {
+            id: `chatcmpl-${Date.now()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model || 'claude-opus',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: internalResult },
+                finish_reason: 'stop'
+              }
+            ],
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+          });
+        }
       }
 
       const messages = body.messages || [];
@@ -532,6 +675,18 @@ const server = http.createServer(async (req, res) => {
             saveSessionStore();
           }
 
+          if (!res.writableEnded && (result?.status === 'quota_exceeded' || result?.is_limit_error)) {
+            const quotaWarning = `⚠️ **محدودیت سهمیه ۳ ساعته GapGPT:**\n\n${result.message || 'سقف پیام‌های این بازه در GapGPT تکمیل شده است.'}\n\n${result.next_reset_time ? `زمان بازنشانی و شروع مجدد: **${result.next_reset_time}**` : ''}`;
+            const warnChunk = {
+              id: chatId,
+              object: 'chat.completion.chunk',
+              created: Math.floor(Date.now() / 1000),
+              model: model,
+              choices: [{ index: 0, delta: { content: quotaWarning }, finish_reason: null }]
+            };
+            res.write(`data: ${JSON.stringify(warnChunk)}\n\n`);
+          }
+
           if (!res.writableEnded && result && result.incomplete) {
             const warn = {
               id: chatId, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model,
@@ -607,6 +762,10 @@ const server = http.createServer(async (req, res) => {
       if (result && result.conversation_id && convKey) {
         chatSessionMap.set(convKey, result.conversation_id);
         saveSessionStore();
+      }
+
+      if (result && (result.status === 'quota_exceeded' || result.is_limit_error) && !result.response) {
+        result.response = `⚠️ **محدودیت سهمیه ۳ ساعته GapGPT:**\n\n${result.message || 'سقف پیام‌های این بازه در GapGPT تکمیل شده است.'}\n\n${result.next_reset_time ? `زمان بازنشانی و شروع مجدد: **${result.next_reset_time}**` : ''}`;
       }
 
       return sendJson(res, 200, {
