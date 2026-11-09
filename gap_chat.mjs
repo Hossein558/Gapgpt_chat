@@ -484,47 +484,110 @@ export async function getQuota() {
   };
 }
 
-// Single websocket attempt
+// Single websocket attempt — resilient streaming with REST recovery.
+//
+// GapGPT protocol notes (verified by live tracing):
+//  * The socket is account-wide: events of other chats/messages may arrive, so we
+//    strictly filter by the message token returned in `ack_new_message`.
+//  * `text_response_chunk` carries {block_id, start_ind, text}. Text must be placed at
+//    `start_ind` inside its block (not blindly appended).
+//  * `new_message` carries full snapshots of `response[]` (text blocks may lag or lead chunks).
+//  * `data.done` on chunks only marks the end of a block, NOT of the whole answer.
+//    Completion = message.completed_at / status === 'completed'.
+//  * The socket is frequently dropped by the server (close code 1006) mid-generation while
+//    the backend keeps generating. In that case we switch to polling the REST endpoint
+//    /get_chat/token/<chat> until the message is completed, and stream the remaining delta.
+const SOCKET_IDLE_MS = 120000;     // no WS event for this long -> switch to REST recovery
+const RECOVERY_POLL_MS = 4000;     // REST polling interval during recovery
+
 function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTokens = [], onChunk, timeoutMs }) {
   const token = getAccessToken();
 
   return new Promise((resolve, reject) => {
     let ws;
-    let resolved = false;
-    let timer = null;
+    let settled = false;
+    let deadlineTimer = null;
+    let idleTimer = null;
+    let recovering = false;
 
     const sentRid = Math.floor(Math.random() * 1e8);
     let hasAcked = false;
     let targetChatToken = chatId;
     let targetMessageToken = '';
-    let streamText = '';
-    let fullResponse = '';
-    let reasoning = '';
     let messagesRemaining = null;
-    let streamedChars = 0;
 
-    function cleanup() {
-      if (timer) clearTimeout(timer);
+    // Ordered text blocks of the target message: block_id -> text
+    const blockOrder = [];
+    const blocks = new Map();
+    let reasoning = '';
+    let emittedLen = 0;   // chars of assembled text already delivered via onChunk
+
+    function assemble() {
+      return blockOrder.map(id => blocks.get(id) || '').filter(Boolean).join('\n\n');
+    }
+
+    function ensureBlock(id) {
+      if (!blocks.has(id)) {
+        blocks.set(id, '');
+        blockOrder.push(id);
+      }
+    }
+
+    function flush() {
+      if (!onChunk) return;
+      const text = assemble();
+      if (text.length > emittedLen) {
+        const delta = text.slice(emittedLen);
+        emittedLen = text.length;
+        try { onChunk(delta); } catch {}
+      }
+    }
+
+    // Apply a full message snapshot (from WS `new_message` or REST `get_chat`)
+    function applySnapshot(m) {
+      if (!Array.isArray(m.response)) return null;
+      let reasoningAcc = '';
+      let idx = 0;
+      for (const r of m.response) {
+        if (r.type === 'loading' && r.icon === 'error') {
+          return { error: r.caption || r.title || 'GapGPT response error' };
+        }
+        if (r.type === 'text') {
+          const id = r.block_id || `__text_${idx}`;
+          ensureBlock(id);
+          const snap = r.content || '';
+          const cur = blocks.get(id);
+          // Snapshot may lag behind chunks; keep the longer, consistent text.
+          if (snap.length >= cur.length) blocks.set(id, snap);
+          idx++;
+        } else if (r.type === 'reasoning' && r.content) {
+          reasoningAcc += (reasoningAcc ? '\n' : '') + r.content;
+        }
+      }
+      if (reasoningAcc) reasoning = reasoningAcc;
+      flush();
+      return { done: Boolean(m.completed_at) || m.status === 'completed' || m.status === 'done' };
+    }
+
+    function cleanupSocket() {
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
       if (ws) {
+        ws.onclose = null; ws.onerror = null; ws.onmessage = null;
         try { ws.close(); } catch {}
       }
     }
 
-    function tryResolve() {
-      if (resolved || !hasAcked) return;
-      let finalText = (fullResponse || streamText).trim();
-      if (!finalText) return;
+    function finish(extra = {}) {
+      if (settled) return;
+      settled = true;
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      cleanupSocket();
+      flush();
 
-      resolved = true;
-      cleanup();
-
-      if (onChunk && finalText.length > streamedChars) {
-        onChunk(finalText.slice(streamedChars));
-        streamedChars = finalText.length;
-      }
+      let finalText = assemble().trim();
+      let cleanReasoning = reasoning.trim();
 
       // Separate any embedded thinking / reasoning
-      let cleanReasoning = reasoning.trim();
       const thinkMatch = finalText.match(/<thinking>([\s\S]*?)<\/thinking>/i);
       if (thinkMatch) {
         cleanReasoning = (cleanReasoning ? cleanReasoning + '\n' : '') + thinkMatch[1].trim();
@@ -557,21 +620,68 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
         effort: effortConfig.label,
         messages_remaining: messagesRemaining,
         response: finalText,
-        reasoning: cleanReasoning
+        reasoning: cleanReasoning,
+        streamed_chars: emittedLen,
+        ...extra
       });
     }
 
-    timer = setTimeout(() => {
-      if (!resolved) {
-        const finalText = (fullResponse || streamText).trim();
-        if (finalText && hasAcked) {
-          tryResolve();
-        } else {
-          resolved = true;
-          cleanup();
-          reject(new Error(`Timeout waiting for GapGPT response (${timeoutMs}ms)`));
-        }
+    function fail(err) {
+      if (settled) return;
+      settled = true;
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      cleanupSocket();
+      err.streamed_chars = emittedLen;
+      reject(err);
+    }
+
+    // REST recovery: socket dropped / went silent, but GapGPT keeps generating server-side.
+    async function startRecovery(reason) {
+      if (settled || recovering) return;
+      if (!hasAcked || !targetChatToken) {
+        return fail(new Error(`GapGPT socket closed before acknowledgement (${reason})`));
       }
+      recovering = true;
+      cleanupSocket();
+      console.warn(`🔁 [RECOVERY] ${reason} — polling GapGPT REST for chat ${targetChatToken} (streamed ${emittedLen} chars so far)`);
+      let consecutiveErrors = 0;
+      while (!settled) {
+        try {
+          const h = await getChatHistory(targetChatToken);
+          consecutiveErrors = 0;
+          const msgs = Array.isArray(h.messages) ? h.messages : [];
+          const m = (targetMessageToken && msgs.find(x => x.token === targetMessageToken)) || msgs[msgs.length - 1];
+          if (m) {
+            if (!targetMessageToken && m.token) targetMessageToken = m.token;
+            const r = applySnapshot(m);
+            if (r?.error) return fail(new Error(r.error));
+            if (r?.done) {
+              console.warn(`✅ [RECOVERY] Completed via REST: ${emittedLen} chars total`);
+              return finish({ recovered: true });
+            }
+          }
+        } catch (err) {
+          consecutiveErrors++;
+          if (consecutiveErrors >= 15) {
+            console.warn(`⚠️ [RECOVERY] REST polling failing repeatedly: ${err.message}`);
+            return assemble().trim() ? finish({ recovered: false, incomplete: true }) : fail(err);
+          }
+        }
+        await new Promise(r => setTimeout(r, RECOVERY_POLL_MS));
+      }
+    }
+
+    function bumpIdle() {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => startRecovery(`no socket activity for ${SOCKET_IDLE_MS / 1000}s`), SOCKET_IDLE_MS);
+    }
+
+    // Hard deadline: return whatever we have (never silently drop accumulated text)
+    deadlineTimer = setTimeout(() => {
+      if (settled) return;
+      console.warn(`⏱️ [DEADLINE] ${timeoutMs}ms reached for chat ${targetChatToken || '(none)'} with ${emittedLen} chars`);
+      if (assemble().trim()) finish({ incomplete: true });
+      else fail(new Error(`Timeout waiting for GapGPT response (${timeoutMs}ms)`));
     }, timeoutMs);
 
     ws = new WebSocket('wss://gapgpt.ir/ws/salam', {
@@ -582,6 +692,7 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
     });
 
     ws.onopen = () => {
+      bumpIdle();
       const modeExtra = {};
       if (effortConfig.reasoning_effort) {
         modeExtra.reasoning_effort = effortConfig.reasoning_effort;
@@ -622,15 +733,19 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
     };
 
     ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        const eventName = msg.event;
+      if (settled || recovering) return;
+      let msg;
+      try { msg = JSON.parse(event.data); } catch { return; }
+      const eventName = msg.event;
+      const data = msg.data || {};
+      bumpIdle();
 
+      try {
         if (eventName === 'ack_new_message') {
-          const data = msg.data || {};
           if (data.status === 'message_limit' || data.status === 'quota_exceeded') {
-            resolved = true;
-            cleanup();
+            settled = true;
+            if (deadlineTimer) clearTimeout(deadlineTimer);
+            cleanupSocket();
             return resolve({
               status: 'quota_exceeded',
               is_limit_error: true,
@@ -640,9 +755,7 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
           }
 
           if (data.status === 'invalid_request') {
-            resolved = true;
-            cleanup();
-            return reject(new Error('GapGPT error: ' + (data.message || 'invalid_request')));
+            return fail(new Error('GapGPT error: ' + (data.message || 'invalid_request')));
           }
 
           hasAcked = true;
@@ -651,81 +764,63 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
           }
           if (data.chat_token) targetChatToken = data.chat_token;
           if (data.chat?.token) targetChatToken = data.chat.token;
-          if (data.message?.token) {
-            targetMessageToken = data.message.token;
+          if (data.message?.token) targetMessageToken = data.message.token;
+          if (!targetMessageToken && Array.isArray(data.chat?.messages) && data.chat.messages.length) {
+            targetMessageToken = data.chat.messages[data.chat.messages.length - 1].token || '';
           }
-        } else if (eventName === 'text_response_chunk') {
-          if (!hasAcked) return;
-          const data = msg.data || {};
-          if (!targetMessageToken || data.mtoken === targetMessageToken) {
-            if (data.text) {
-              streamText += data.text;
-              streamedChars += data.text.length;
-              if (onChunk) onChunk(data.text);
-              // Keep stream alive: reset to idle timeout while chunks are actively arriving
-              if (timer) clearTimeout(timer);
-              timer = setTimeout(() => {
-                if (!resolved) {
-                  tryResolve();
-                }
-              }, 90000);
-            }
-            // Note: data.done in GapGPT only marks partial turn/block endings.
-            // Full completion is solely handled in new_message via m.completed_at / status == 'completed'.
-          }
-        } else if (eventName === 'new_message') {
-          if (!hasAcked) return;
-          const m = msg.data?.message;
-          if (m) {
-            if (targetMessageToken && m.token !== targetMessageToken) {
-              return;
-            }
-
-            if (m.chat_token) targetChatToken = m.chat_token;
-            if (m.token) targetMessageToken = m.token;
-
-            if (Array.isArray(m.response)) {
-              let textAcc = '';
-              let reasoningAcc = '';
-              for (const r of m.response) {
-                if (r.type === 'loading' && r.icon === 'error') {
-                  const errMsg = r.caption || r.title || 'GapGPT response error';
-                  cleanup();
-                  resolved = true;
-                  return reject(new Error(errMsg));
-                }
-                if (r.type === 'text' && r.content) {
-                  textAcc += (textAcc ? '\n' : '') + r.content;
-                } else if (r.type === 'reasoning' && r.content) {
-                  reasoningAcc += (reasoningAcc ? '\n' : '') + r.content;
-                }
-              }
-              if (textAcc) fullResponse = textAcc;
-              if (reasoningAcc) reasoning = reasoningAcc;
-            }
-
-            if (fullResponse && onChunk && fullResponse.length > streamedChars) {
-              const delta = fullResponse.slice(streamedChars);
-              streamedChars += delta.length;
-              onChunk(delta);
-            }
-
-            // Only complete when GapGPT backend has fully completed the entire turn
-            const isDone = Boolean(m.completed_at) || (m.status === 'completed') || (m.status === 'done');
-            if (isDone && (fullResponse || streamText)) {
-              tryResolve();
-            }
-          }
+          return;
         }
-      } catch (err) {}
+
+        if (!hasAcked) return;
+
+        if (eventName === 'text_response_chunk') {
+          if (targetMessageToken && data.mtoken && data.mtoken !== targetMessageToken) return;
+          if (!targetMessageToken && data.mtoken) targetMessageToken = data.mtoken;
+          if (typeof data.text !== 'string' || !data.text) return;
+          const id = data.block_id || '__stream';
+          ensureBlock(id);
+          const cur = blocks.get(id);
+          const start = Number.isInteger(data.start_ind) ? data.start_ind : cur.length;
+          if (start <= cur.length) {
+            const merged = cur.slice(0, start) + data.text;
+            // Never shrink a block (chunks may be re-sent / overlap)
+            if (merged.length >= cur.length) blocks.set(id, merged);
+            flush();
+          }
+          // start > cur.length => gap; the next `new_message` snapshot / REST poll fills it.
+          return;
+        }
+
+        if (eventName === 'new_message') {
+          const m = data.message;
+          if (!m) return;
+          if (targetMessageToken && m.token !== targetMessageToken) return;
+          if (!targetMessageToken) {
+            // Only adopt messages that belong to our chat
+            if (targetChatToken && m.chat_token && m.chat_token !== targetChatToken) return;
+            if (m.token) targetMessageToken = m.token;
+          }
+          if (m.chat_token) targetChatToken = m.chat_token;
+          const r = applySnapshot(m);
+          if (r?.error) return fail(new Error(r.error));
+          if (r?.done) return finish();
+        }
+      } catch (err) {
+        console.warn('⚠️ [SOCKET] event handling error:', err.message);
+      }
+    };
+
+    ws.onclose = (ev) => {
+      if (settled || recovering) return;
+      startRecovery(`socket closed (code ${ev?.code ?? '?'})`);
     };
 
     ws.onerror = (err) => {
-      if (!resolved) {
-        resolved = true;
-        cleanup();
-        reject(new Error('WebSocket connection error: ' + (err.message || 'Unknown error')));
+      if (settled || recovering) return;
+      if (!hasAcked) {
+        return fail(new Error('WebSocket connection error: ' + (err?.message || 'Unknown error')));
       }
+      startRecovery('socket error: ' + (err?.message || 'unknown'));
     };
   });
 }
@@ -743,9 +838,9 @@ export async function askGapChat({
 }) {
   const primaryModelConfig = resolveModel(model);
   const effortConfig = resolveEffort(effort);
-  // Allow up to 10 minutes (600,000ms) for heavy reasoning or deep coding models
+  // Allow up to 15 minutes (900,000ms) for heavy reasoning or deep coding models
   const isHeavyModel = primaryModelConfig.key.includes('opus') || primaryModelConfig.key.includes('o1') || primaryModelConfig.key.includes('o3') || primaryModelConfig.key.includes('pro');
-  const effectiveTimeout = (timeoutMs === 300000 && (isHeavyModel || effort === 'deep' || effort === 'thoughtful' || effort === 'high')) ? 600000 : timeoutMs;
+  const effectiveTimeout = (timeoutMs === 300000 && (isHeavyModel || effort === 'deep' || effort === 'thoughtful' || effort === 'high')) ? 900000 : timeoutMs;
 
   // Upload images if any
   const fileTokens = [];
@@ -819,6 +914,8 @@ export async function askGapChat({
       response: ''
     };
   } catch (err) {
+    // Never switch models after part of the answer has already been streamed to the client
+    if (err && err.streamed_chars > 0) throw err;
     if (autoFallback) {
       console.warn(`⚠️ [AUTO-FALLBACK] Primary model ${primaryModelConfig.name} encountered an error: ${err.message}. Engaging fallback chain...`);
       for (const fallbackKey of fallbackCandidates) {

@@ -104,7 +104,23 @@ function isAuthorized(req) {
   return false;
 }
 
+// Track in-flight generation requests so a restart/deploy never kills a live stream
+let activeRequests = 0;
+let shuttingDown = false;
+
 const server = http.createServer(async (req, res) => {
+  const isGeneration = req.method === 'POST' && /^\/(v1\/chat\/completions|ask)\/?$/.test((req.url || '').split('?')[0]);
+  if (isGeneration) {
+    if (shuttingDown) {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '5', 'Connection': 'close' });
+      return res.end(JSON.stringify({ error: { message: 'Bridge is restarting, please retry in a few seconds.', type: 'server_restarting' } }));
+    }
+    activeRequests++;
+    let released = false;
+    const release = () => { if (!released) { released = true; activeRequests--; } };
+    res.on('finish', release);
+    res.on('close', release);
+  }
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
 
@@ -328,6 +344,14 @@ const server = http.createServer(async (req, res) => {
 
           clearInterval(pingInterval);
 
+          if (!res.writableEnded && result && result.incomplete) {
+            const warn = {
+              id: chatId, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model,
+              choices: [{ index: 0, delta: { content: `\n\n> ⚠️ پاسخ کامل از GapGPT دریافت نشد. متن کامل در گفتگوی GapGPT موجود است: https://gapgpt.app/chat/${result.conversation_id || ''}` }, finish_reason: null }]
+            };
+            res.write(`data: ${JSON.stringify(warn)}\n\n`);
+          }
+
           if (!res.writableEnded) {
             const doneChunk = {
               id: chatId,
@@ -480,3 +504,23 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`GapGPT Bridge HTTP server running on http://${HOST}:${PORT}`);
 });
+
+// Graceful shutdown: on SIGTERM/SIGINT (docker stop / compose up), finish all in-flight
+// streams before exiting instead of being SIGKILLed mid-response.
+const DRAIN_MAX_MS = Number(process.env.DRAIN_MAX_MS || 14 * 60 * 1000);
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`🛑 ${signal} received — draining ${activeRequests} in-flight request(s) (max ${DRAIN_MAX_MS / 1000}s)...`);
+  server.close();
+  const started = Date.now();
+  const check = setInterval(() => {
+    if (activeRequests <= 0 || Date.now() - started > DRAIN_MAX_MS) {
+      clearInterval(check);
+      console.log(`👋 Exiting (remaining in-flight: ${Math.max(activeRequests, 0)})`);
+      process.exit(0);
+    }
+  }, 1000);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
