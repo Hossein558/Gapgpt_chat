@@ -272,7 +272,7 @@ rl.on('line', async (line) => {
               prompt: { type: 'string', description: 'The prompt or problem description to process.' },
               model: {
                 type: 'string',
-                enum: ['claude-opus', 'claude-sonnet', 'claude-fable', 'claude-haiku', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-terra', 'gpt-6-luna', 'deepseek', 'kimi-3', 'glm-5.3', 'grok-4.6', 'gapgpt-qwen-3.6', 'gemini'],
+                enum: ['claude-opus', 'claude-sonnet', 'claude-haiku-5-5', 'claude-4-6-sonnet', 'claude-fable-5-1', 'claude-haiku', 'gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-pro', 'gemini-omni', 'gemini', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-5.4-pro', 'deepseek', 'grok-4.6', 'qwen-3'],
                 description: 'The model to use in Chat (default: claude-opus).'
               },
               effort: {

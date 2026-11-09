@@ -424,25 +424,46 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // Models list (/v1/models) - Full 46 models suite
+        // Models list (/v1/models) - Full 55 models suite including Gemini 4 Argon & Claude Haiku 5.5
     if (pathname === '/v1/models' && req.method === 'GET') {
       return sendJson(res, 200, {
         object: 'list',
         data: [
           // 1. Google Gemini Suite
+          { id: 'gemini-4-argon', object: 'model', name: 'Gemini 4 Argon (پیشرفته‌ترین مدل استدلالی گوگل)' },
+          { id: 'gemini-3.8-flash', object: 'model', name: 'Gemini 3.8 Flash (جدیدترین مدل Flash گوگل)' },
+          { id: 'gemini-3.5-flash-lite', object: 'model', name: 'Gemini 3.5 Flash Lite (مدل سبک و سریع گوگل)' },
+          { id: 'gemini-2.5-pro', object: 'model', name: 'Gemini 2.5 Pro (مدل پرو جمنای ۲.۵ گوگل)' },
+          { id: 'gemini-omni', object: 'model', name: 'Gemini Omni (تولید ویدئو از متن و تصویر گوگل)' },
+          { id: 'gemini', object: 'model', name: 'Google Gemini (Auto - پاسخ سریع و دقیق)' },
           { id: 'gemini-2.0-flash', object: 'model', name: 'Google Gemini 2.0 Flash (Fast Multimodal)' },
-          { id: 'gemini-1.5-pro', object: 'model', name: 'Google Gemini 1.5 Pro (Massive Context & Deep Analysis)' },
-          { id: 'gemini-1.5-flash', object: 'model', name: 'Google Gemini 1.5 Flash (Lightweight & Fast)' },
-          { id: 'gemini-1.5-flash-8b', object: 'model', name: 'Google Gemini 1.5 Flash 8B (High Efficiency)' },
+          { id: 'gemini-1.5-pro', object: 'model', name: 'Google Gemini 1.5 Pro' },
+          { id: 'gemini-1.5-flash', object: 'model', name: 'Google Gemini 1.5 Flash' },
+          { id: 'gemini-1.5-flash-8b', object: 'model', name: 'Google Gemini 1.5 Flash 8B' },
           { id: 'gemini-pro', object: 'model', name: 'Google Gemini Pro' },
           { id: 'gemini-flash', object: 'model', name: 'Google Gemini Flash' },
-          { id: 'gemini', object: 'model', name: 'Google Gemini (Auto)' },
 
-          // 2. OpenAI GPT & Reasoning Suite
+          // 2. Anthropic Claude Suite
+          { id: 'claude-haiku-5-5', object: 'model', name: 'Claude Haiku 5.5 (مدل سبک و سریع Anthropic)' },
+          { id: 'claude-haiku', object: 'model', name: 'Claude Haiku 5.5 (Fast & Lightweight)' },
+          { id: 'claude-4-6-sonnet', object: 'model', name: 'Claude 4.6 Sonnet (جدیدترین مدل Sonnet 4.6)' },
+          { id: 'claude-sonnet-5-5', object: 'model', name: 'Claude Sonnet 5.5 (جدیدترین مدل Sonnet 5.5)' },
+          { id: 'claude-sonnet', object: 'model', name: 'Claude Sonnet 5.5 (Anthropic)' },
+          { id: 'claude-opus-5-5', object: 'model', name: 'Claude Opus 5.5 (Master Reasoning & Coding)' },
+          { id: 'claude-opus', object: 'model', name: 'Claude Opus 5.5 (Anthropic)' },
+          { id: 'claude-fable-5-1', object: 'model', name: 'Claude Fable 5.1 (تولید محتوای خلاقانه)' },
+          { id: 'claude-fable-5', object: 'model', name: 'Claude Fable 5.1' },
+          { id: 'claude-fable', object: 'model', name: 'Claude Fable (Creative & Writing)' },
+          { id: 'claude', object: 'model', name: 'Claude (Auto - انتخاب هوشمند بین Sonnet, Opus و Fable)' },
+          { id: 'claude-3-5-sonnet', object: 'model', name: 'Claude 3.5 Sonnet' },
+          { id: 'claude-3-5-haiku', object: 'model', name: 'Claude 3.5 Haiku' },
+
+          // 3. OpenAI GPT & Reasoning Suite
           { id: 'gpt-6-astra', object: 'model', name: 'GPT-6 Astra (Flagship Coding & Execution)' },
-          { id: 'gpt-6.1-terra', object: 'model', name: 'GPT-6.1 Terra (Architecture & Reasoning)' },
-          { id: 'gpt-6.1-sol', object: 'model', name: 'GPT-6.1 Sol (Agentic Workflow)' },
-          { id: 'gpt-6-luna', object: 'model', name: 'GPT-6 Luna (Optimized Fast Reasoning)' },
+          { id: 'gpt-6.1-sol', object: 'model', name: 'GPT-6.1 Sol (استدلال و برنامه‌نویسی OpenAI)' },
+          { id: 'gpt-6.1-terra', object: 'model', name: 'GPT-6.1 Terra (مدل متعادل خانواده GPT-6)' },
+          { id: 'gpt-6-luna', object: 'model', name: 'GPT-6 Luna (سریع و مقرون‌به‌صرفه)' },
+          { id: 'gpt-5.4-pro', object: 'model', name: 'GPT-5.4 Pro (نسخه پیشرفته برای کاربران حرفه‌ای)' },
           { id: 'o1', object: 'model', name: 'OpenAI o1 (Deep Deliberate Reasoning)' },
           { id: 'o1-mini', object: 'model', name: 'OpenAI o1-mini (STEM & Fast Reasoning)' },
           { id: 'o3', object: 'model', name: 'OpenAI o3 (Advanced Multi-Step Thinking)' },
@@ -452,17 +473,6 @@ const server = http.createServer(async (req, res) => {
           { id: 'gpt-4-turbo', object: 'model', name: 'OpenAI GPT-4 Turbo' },
           { id: 'chatgpt', object: 'model', name: 'ChatGPT 4o (Standard)' },
 
-          // 3. Anthropic Claude Suite
-          { id: 'claude-opus', object: 'model', name: 'Claude Opus 5.5 (Master Reasoning & Coding)' },
-          { id: 'claude-opus-5-5', object: 'model', name: 'Claude Opus 5.5 (Direct)' },
-          { id: 'claude-sonnet', object: 'model', name: 'Claude Sonnet 5.5 (High Speed & Multimodal)' },
-          { id: 'claude-sonnet-5-5', object: 'model', name: 'Claude Sonnet 5.5 (Direct)' },
-          { id: 'claude-fable', object: 'model', name: 'Claude Fable 5 (Creative & Writing)' },
-          { id: 'claude-fable-5', object: 'model', name: 'Claude Fable 5 (Direct)' },
-          { id: 'claude-haiku', object: 'model', name: 'Claude Haiku 4.5 (Lightweight & Fast)' },
-          { id: 'claude-3-5-sonnet', object: 'model', name: 'Claude 3.5 Sonnet' },
-          { id: 'claude-3-5-haiku', object: 'model', name: 'Claude 3.5 Haiku' },
-
           // 4. DeepSeek Suite
           { id: 'deepseek-r1', object: 'model', name: 'DeepSeek R1 (Open Reasoning Benchmark)' },
           { id: 'deepseek-v3', object: 'model', name: 'DeepSeek V3 (General Flagship)' },
@@ -471,8 +481,8 @@ const server = http.createServer(async (req, res) => {
           { id: 'deepseek-coder', object: 'model', name: 'DeepSeek Coder' },
 
           // 5. xAI Grok Suite
-          { id: 'grok-2', object: 'model', name: 'xAI Grok 2 (Realtime Knowledge)' },
           { id: 'grok-4.6', object: 'model', name: 'xAI Grok 4.6 (Next-Gen Intelligence)' },
+          { id: 'grok-2', object: 'model', name: 'xAI Grok 2 (Realtime Knowledge)' },
           { id: 'grok', object: 'model', name: 'xAI Grok (Auto)' },
           { id: 'grok-vision', object: 'model', name: 'xAI Grok 2 Vision' },
 
@@ -483,10 +493,10 @@ const server = http.createServer(async (req, res) => {
           { id: 'qwen-2.5-coder', object: 'model', name: 'Alibaba Qwen 2.5 Coder' },
           { id: 'qwen-plus', object: 'model', name: 'Alibaba Qwen Plus' },
 
-          // 7. Search & Research AI
-          { id: 'perplexity', object: 'model', name: 'Perplexity Sonar (Live Web-Grounded Search)' },
-          { id: 'sonar-pro', object: 'model', name: 'Perplexity Sonar Pro' },
-          { id: 'sonar-medium', object: 'model', name: 'Perplexity Sonar Medium' },
+          // 7. Perplexity Suite
+          { id: 'perplexity', object: 'model', name: 'Perplexity Sonar (Online Search Intelligence)' },
+          { id: 'sonar', object: 'model', name: 'Perplexity Sonar (Direct)' },
+          { id: 'sonar-pro', object: 'model', name: 'Perplexity Sonar Pro (Deep Research)' },
 
           // 8. Other Specialized Models
           { id: 'kimi-3', object: 'model', name: 'Moonshot Kimi 3 (Long-Context Synthesis)' },

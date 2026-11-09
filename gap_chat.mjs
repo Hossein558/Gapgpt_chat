@@ -341,6 +341,21 @@ export function resolveModel(modelName) {
   const m = (modelName || 'claude-opus').toLowerCase().trim();
 
   // 1. Google Gemini Suite
+  if (m.includes('argon') || m === 'gemini-4-argon' || m === 'gemini-4') {
+    return { key: 'gemini-4-argon', bot_name: 'A-GEMINI', mode: 'argon', name: 'Gemini 4 Argon' };
+  }
+  if (m.includes('3.8-flash') || m.includes('3.8') || m === 'gemini-3.8-flash') {
+    return { key: 'gemini-3.8-flash', bot_name: 'A-GEMINI', mode: '3.8-flash', name: 'Gemini 3.8 Flash' };
+  }
+  if (m.includes('3.5-flash-lite') || m.includes('3.5') || m.includes('flash-lite') || m === 'gemini-3.5-flash-lite') {
+    return { key: 'gemini-3.5-flash-lite', bot_name: 'A-GEMINI', mode: '3.5-flash-lite', name: 'Gemini 3.5 Flash Lite' };
+  }
+  if (m.includes('2.5-pro') || m.includes('2.5') || m === 'gemini-2.5-pro') {
+    return { key: 'gemini-2.5-pro', bot_name: 'A-GEMINI', mode: '2.5-pro', name: 'Gemini 2.5 Pro' };
+  }
+  if (m.includes('omni') || m === 'gemini-omni') {
+    return { key: 'gemini-omni', bot_name: 'A-GEMINI', mode: 'omni', name: 'Gemini Omni' };
+  }
   if (m.includes('gemini-2') || m === 'gemini-2.0-flash' || m === 'gemini-2.0') {
     return { key: 'gemini-2.0-flash', bot_name: 'A-GEMINI-2.0-FLASH', mode: '', name: 'Google Gemini 2.0 Flash' };
   }
@@ -360,10 +375,42 @@ export function resolveModel(modelName) {
     return { key: 'gemini-flash', bot_name: 'A-GEMINI', mode: 'flash', name: 'Google Gemini Flash' };
   }
   if (m.includes('gemini')) {
-    return { key: 'gemini-2.0-flash', bot_name: 'A-GEMINI-2.0-FLASH', mode: '', name: 'Google Gemini 2.0 Flash' };
+    return { key: 'gemini', bot_name: 'A-GEMINI', mode: '', name: 'Gemini (Auto)' };
   }
 
-  // 2. OpenAI Reasoning (o1 / o3)
+  // 2. Anthropic Claude Suite
+  if (m.includes('haiku')) {
+    return { key: 'claude-haiku-5-5', bot_name: 'A-CLAUDE', mode: 'haiku-5.5', name: 'Claude Haiku 5.5' };
+  }
+  if (m.includes('4.6-sonnet') || m.includes('4-6-sonnet') || m.includes('sonnet-4.6') || m.includes('4.6')) {
+    return { key: 'claude-4-6-sonnet', bot_name: 'A-CLAUDE', mode: '4.6-sonnet', name: 'Claude 4.6 Sonnet' };
+  }
+  if (m.includes('fable')) {
+    return { key: 'claude-fable-5-1', bot_name: 'A-CLAUDE', mode: 'fable-5.1', name: 'Claude Fable 5.1' };
+  }
+  if (m.includes('opus')) {
+    return { key: 'claude-opus', bot_name: 'A-CLAUDE', mode: 'opus', name: 'Claude Opus 5.5' };
+  }
+  if (m.includes('sonnet')) {
+    return { key: 'claude-sonnet', bot_name: 'A-CLAUDE', mode: 'sonnet', name: 'Claude Sonnet 5.5' };
+  }
+  if (m === 'claude' || m.includes('claude-auto')) {
+    return { key: 'claude', bot_name: 'A-CLAUDE', mode: '', name: 'Claude (Auto)' };
+  }
+
+  // 3. OpenAI Flagship / Reasoning / GPT-6 / GPT-5.4
+  if (m.includes('5.4') || m.includes('5-4')) {
+    return { key: 'gpt-5.4-pro', bot_name: 'A-GPT-6-ASTRA', mode: '5.4-pro', name: 'GPT-5.4 Pro' };
+  }
+  if (m.includes('terra')) {
+    return { key: 'gpt-6.1-terra', bot_name: 'A-GPT-5.6-TERRA', mode: '', name: 'GPT-6.1 Terra' };
+  }
+  if (m.includes('sol')) {
+    return { key: 'gpt-6.1-sol', bot_name: 'A-GPT-6-ASTRA', mode: 'sol', name: 'GPT-6.1 Sol' };
+  }
+  if (m.includes('luna')) {
+    return { key: 'gpt-6-luna', bot_name: 'A-GPT-6-ASTRA', mode: 'luna', name: 'GPT-6 Luna' };
+  }
   if (m.includes('o1-mini')) {
     return { key: 'o1-mini', bot_name: 'A-O1-MINI', mode: '', name: 'OpenAI o1-mini' };
   }
@@ -376,36 +423,11 @@ export function resolveModel(modelName) {
   if (m === 'o3' || m.includes('openai-o3')) {
     return { key: 'o3', bot_name: 'A-O3', mode: '', name: 'OpenAI o3' };
   }
-
-  // 3. OpenAI Flagship / GPT-6 / GPT-4
-  if (m.includes('terra')) {
-    return { key: 'gpt-6.1-terra', bot_name: 'A-GPT-5.6-TERRA', mode: '', name: 'GPT-6.1 Terra' };
-  }
-  if (m.includes('sol')) {
-    return { key: 'gpt-6.1-sol', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GPT-6.1 Sol' };
-  }
-  if (m.includes('luna')) {
-    return { key: 'gpt-6-luna', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GPT-6 Luna' };
-  }
   if (m.includes('astra') || m.includes('gpt-6') || m.includes('gpt-4') || m.includes('chatgpt') || m.includes('openai')) {
     return { key: 'gpt-6-astra', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GPT-6 Astra' };
   }
 
-  // 4. Anthropic Claude Suite
-  if (m.includes('opus')) {
-    return { key: 'claude-opus', bot_name: 'A-CLAUDE', mode: 'opus', name: 'Claude Opus 5.5' };
-  }
-  if (m.includes('fable')) {
-    return { key: 'claude-fable', bot_name: 'A-CLAUDE', mode: 'fable', name: 'Claude Fable 5' };
-  }
-  if (m.includes('haiku')) {
-    return { key: 'claude-haiku', bot_name: 'A-CLAUDE', mode: 'haiku', name: 'Claude Haiku 4.5' };
-  }
-  if (m.includes('sonnet') || m.includes('claude')) {
-    return { key: 'claude-sonnet', bot_name: 'A-CLAUDE', mode: 'sonnet', name: 'Claude Sonnet 5.5' };
-  }
-
-  // 5. DeepSeek Suite
+  // 4. DeepSeek Suite
   if (m.includes('r1')) {
     return { key: 'deepseek-r1', bot_name: 'A-DEEPSEEK-R1', mode: '', name: 'DeepSeek R1' };
   }
@@ -416,7 +438,7 @@ export function resolveModel(modelName) {
     return { key: 'deepseek', bot_name: 'A-DEEPSEEK', mode: '', name: 'DeepSeek Auto' };
   }
 
-  // 6. xAI Grok
+  // 5. xAI Grok
   if (m.includes('grok-2')) {
     return { key: 'grok-2', bot_name: 'A-GROK-2', mode: '', name: 'Grok 2' };
   }
@@ -424,17 +446,17 @@ export function resolveModel(modelName) {
     return { key: 'grok', bot_name: 'A-GROK', mode: '', name: 'xAI Grok' };
   }
 
-  // 7. Alibaba Qwen
+  // 6. Alibaba Qwen
   if (m.includes('qwen')) {
     return { key: 'qwen-3', bot_name: 'A-QWEN-3', mode: '', name: 'Alibaba Qwen 3' };
   }
 
-  // 8. Perplexity
+  // 7. Perplexity
   if (m.includes('perplexity') || m.includes('sonar')) {
     return { key: 'perplexity', bot_name: 'A-PERPLEXITY', mode: '', name: 'Perplexity Sonar' };
   }
 
-  // 9. Other Asian LLMs (Kimi / GLM)
+  // 8. Other Models (Kimi / GLM)
   if (m.includes('kimi')) {
     return { key: 'kimi-3', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'Kimi 3' };
   }
