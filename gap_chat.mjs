@@ -500,7 +500,6 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
     let streamText = '';
     let fullResponse = '';
     let reasoning = '';
-    let chunkDone = false;
     let messagesRemaining = null;
     let streamedChars = 0;
 
@@ -671,10 +670,8 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
                 }
               }, 90000);
             }
-            if (data.done) {
-              chunkDone = true;
-              setTimeout(() => tryResolve(), 600);
-            }
+            // Note: data.done in GapGPT only marks partial turn/block endings.
+            // Full completion is solely handled in new_message via m.completed_at / status == 'completed'.
           }
         } else if (eventName === 'new_message') {
           if (!hasAcked) return;
@@ -688,6 +685,8 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
             if (m.token) targetMessageToken = m.token;
 
             if (Array.isArray(m.response)) {
+              let textAcc = '';
+              let reasoningAcc = '';
               for (const r of m.response) {
                 if (r.type === 'loading' && r.icon === 'error') {
                   const errMsg = r.caption || r.title || 'GapGPT response error';
@@ -696,11 +695,13 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
                   return reject(new Error(errMsg));
                 }
                 if (r.type === 'text' && r.content) {
-                  fullResponse = r.content;
+                  textAcc += (textAcc ? '\n' : '') + r.content;
                 } else if (r.type === 'reasoning' && r.content) {
-                  reasoning = r.content;
+                  reasoningAcc += (reasoningAcc ? '\n' : '') + r.content;
                 }
               }
+              if (textAcc) fullResponse = textAcc;
+              if (reasoningAcc) reasoning = reasoningAcc;
             }
 
             if (fullResponse && onChunk && fullResponse.length > streamedChars) {
@@ -709,7 +710,8 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
               onChunk(delta);
             }
 
-            const isDone = m.completed_at || chunkDone || (m.status === 'completed') || (m.status === 'done');
+            // Only complete when GapGPT backend has fully completed the entire turn
+            const isDone = Boolean(m.completed_at) || (m.status === 'completed') || (m.status === 'done');
             if (isDone && (fullResponse || streamText)) {
               tryResolve();
             }
