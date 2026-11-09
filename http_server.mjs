@@ -1,6 +1,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import {
   askGapChat,
@@ -45,6 +46,66 @@ function checkExclusion(payload) {
   const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
   for (const id of excludedIds) {
     if (str.includes(id)) return id;
+  }
+  return null;
+}
+
+// ==========================================
+// Persistent Conversation -> GapGPT Chat Token Store
+// ==========================================
+const SESSIONS_FILE = path.join(__dirname, 'session_store.json');
+let chatSessionMap = new Map();
+
+function loadSessionStore() {
+  try {
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8'));
+      chatSessionMap = new Map(Object.entries(data));
+      console.log(`📂 Loaded ${chatSessionMap.size} chat session mappings.`);
+    }
+  } catch (e) {
+    console.warn('⚠️ Could not load session_store.json:', e.message);
+  }
+}
+
+function saveSessionStore() {
+  try {
+    if (chatSessionMap.size > 2000) {
+      const keys = Array.from(chatSessionMap.keys());
+      for (let i = 0; i < keys.length - 1500; i++) {
+        chatSessionMap.delete(keys[i]);
+      }
+    }
+    const obj = Object.fromEntries(chatSessionMap);
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('⚠️ Could not save session_store.json:', e.message);
+  }
+}
+
+loadSessionStore();
+
+function extractConversationKey(req, body) {
+  const headerChatId = req.headers['x-openwebui-chat-id'] || req.headers['x-chat-id'] || req.headers['x-conversation-id'];
+  if (headerChatId && typeof headerChatId === 'string' && headerChatId.trim()) {
+    return headerChatId.trim();
+  }
+  if (body.chat_id && typeof body.chat_id === 'string' && body.chat_id.trim()) {
+    return body.chat_id.trim();
+  }
+  if (body.conversation_id && typeof body.conversation_id === 'string' && body.conversation_id.trim()) {
+    return body.conversation_id.trim();
+  }
+  if (body.metadata?.chat_id && typeof body.metadata.chat_id === 'string' && body.metadata.chat_id.trim()) {
+    return body.metadata.chat_id.trim();
+  }
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const firstUser = messages.find(m => m.role === 'user');
+  if (firstUser) {
+    const raw = typeof firstUser.content === 'string' ? firstUser.content : JSON.stringify(firstUser.content);
+    if (raw && raw.trim().length > 3) {
+      return 'conv_' + crypto.createHash('sha256').update(raw.trim()).digest('hex').slice(0, 24);
+    }
   }
   return null;
 }
@@ -245,7 +306,7 @@ const server = http.createServer(async (req, res) => {
       const result = await askGapChat({
         prompt: prompt || 'Analyze this image',
         model: model || 'claude-opus',
-        effort: effort || 'high',
+        effort: effort || undefined,
         chatId: conversation_id || '',
         images: images || []
       });
@@ -361,6 +422,28 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'No prompt, messages, or images provided' });
       }
 
+      // Extract effort preference
+      const requestedEffort = body.reasoning_effort || body.effort || body.metadata?.params?.reasoning_effort || undefined;
+
+      // Extract conversation key for thread continuity
+      const convKey = extractConversationKey(req, body);
+      const existingGapChatToken = convKey ? chatSessionMap.get(convKey) : null;
+
+      // When continuing an existing thread, GapGPT's database already has the entire prior history!
+      // Sending only the latest turn prevents token limits and prevents context chopping.
+      let promptToSend = prompt;
+      let targetChatId = '';
+      if (existingGapChatToken && parsedMessages.length > 1) {
+        targetChatId = existingGapChatToken;
+        const lastMsg = parsedMessages[parsedMessages.length - 1];
+        let latestText = lastMsg ? lastMsg.content : prompt;
+        if (parsedMessages[0].role === 'system' && parsedMessages.length > 2) {
+          latestText = `system: ${parsedMessages[0].content}\n\n${latestText}`;
+        }
+        promptToSend = latestText;
+        console.log(`🔗 [CONTINUITY] Continuing thread [${convKey}] via GapGPT chat [${targetChatId}] with latest turn (${promptToSend.length} chars)`);
+      }
+
       // Handle Streaming (SSE)
       if (body.stream) {
         res.writeHead(200, {
@@ -380,31 +463,74 @@ const server = http.createServer(async (req, res) => {
         }, 5000);
 
         try {
-          const result = await askGapChat({
-            prompt,
-            model,
-            effort: 'high',
-            images,
-            onChunk: (chunkText) => {
-              if (res.writableEnded) return;
-              const chunk = {
-                id: chatId,
-                object: 'chat.completion.chunk',
-                created: Math.floor(Date.now() / 1000),
-                model: model,
-                choices: [
-                  {
-                    index: 0,
-                    delta: { content: chunkText },
-                    finish_reason: null
-                  }
-                ]
-              };
-              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          let result;
+          try {
+            result = await askGapChat({
+              prompt: promptToSend,
+              model,
+              effort: requestedEffort,
+              chatId: targetChatId,
+              images,
+              onChunk: (chunkText) => {
+                if (res.writableEnded) return;
+                const chunk = {
+                  id: chatId,
+                  object: 'chat.completion.chunk',
+                  created: Math.floor(Date.now() / 1000),
+                  model: model,
+                  choices: [
+                    {
+                      index: 0,
+                      delta: { content: chunkText },
+                      finish_reason: null
+                    }
+                  ]
+                };
+                res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+              }
+            });
+          } catch (streamAttemptErr) {
+            if (targetChatId) {
+              console.warn(`⚠️ [CONTINUITY-FALLBACK] Chat continuity failed for [${targetChatId}] (${streamAttemptErr.message}). Retrying as fresh chat with full context...`);
+              if (convKey) {
+                chatSessionMap.delete(convKey);
+                saveSessionStore();
+              }
+              result = await askGapChat({
+                prompt,
+                model,
+                effort: requestedEffort,
+                chatId: '',
+                images,
+                onChunk: (chunkText) => {
+                  if (res.writableEnded) return;
+                  const chunk = {
+                    id: chatId,
+                    object: 'chat.completion.chunk',
+                    created: Math.floor(Date.now() / 1000),
+                    model: model,
+                    choices: [
+                      {
+                        index: 0,
+                        delta: { content: chunkText },
+                        finish_reason: null
+                      }
+                    ]
+                  };
+                  res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+                }
+              });
+            } else {
+              throw streamAttemptErr;
             }
-          });
+          }
 
           clearInterval(pingInterval);
+
+          if (result && result.conversation_id && convKey) {
+            chatSessionMap.set(convKey, result.conversation_id);
+            saveSessionStore();
+          }
 
           if (!res.writableEnded && result && result.incomplete) {
             const warn = {
@@ -450,12 +576,38 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Non-streaming response
-      const result = await askGapChat({
-        prompt,
-        model,
-        effort: 'high',
-        images
-      });
+      let result;
+      try {
+        result = await askGapChat({
+          prompt: promptToSend,
+          model,
+          effort: requestedEffort,
+          chatId: targetChatId,
+          images
+        });
+      } catch (nonStreamAttemptErr) {
+        if (targetChatId) {
+          console.warn(`⚠️ [CONTINUITY-FALLBACK] Non-streaming chat continuity failed for [${targetChatId}] (${nonStreamAttemptErr.message}). Retrying as fresh chat...`);
+          if (convKey) {
+            chatSessionMap.delete(convKey);
+            saveSessionStore();
+          }
+          result = await askGapChat({
+            prompt,
+            model,
+            effort: requestedEffort,
+            chatId: '',
+            images
+          });
+        } else {
+          throw nonStreamAttemptErr;
+        }
+      }
+
+      if (result && result.conversation_id && convKey) {
+        chatSessionMap.set(convKey, result.conversation_id);
+        saveSessionStore();
+      }
 
       return sendJson(res, 200, {
         id: `chatcmpl-${Date.now()}`,

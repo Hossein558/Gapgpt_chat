@@ -467,15 +467,44 @@ export function resolveModel(modelName) {
   return { key: 'claude-opus', bot_name: 'A-CLAUDE', mode: 'opus', name: 'Claude Opus 5.5' };
 }
 
-export function resolveEffort(effortStr) {
-  const e = (effortStr || 'high').toLowerCase().trim();
+export function resolveEffort(effortStr, modelKey = '') {
+  const e = (effortStr || '').toLowerCase().trim();
+
+  // Explicit effort mapping (supports Ultra, Max, Extra-High, High, Medium, Low)
+  if (e === 'ultra' || e === 'اولترا' || e === 'فوق العاده') {
+    return { level: 'ultra', label: 'اولترا (Ultra Reasoning)', reasoning_effort: 'ultra' };
+  }
+  if (e === 'max' || e === 'حداکثر') {
+    return { level: 'max', label: 'حداکثر (Maximum Reasoning)', reasoning_effort: 'max' };
+  }
+  if (e === 'xhigh' || e === 'extra-high' || e === 'extra_high' || e === 'خیلی عمیق' || e === 'بسیار عمیق' || e === 'فوق عمیق') {
+    return { level: 'xhigh', label: 'خیلی عمیق (Extra High)', reasoning_effort: 'xhigh' };
+  }
   if (e === 'high' || e === 'deep' || e === 'عمیق') {
     return { level: 'high', label: 'عمیق (Deep)', reasoning_effort: 'high' };
-  } else if (e === 'medium' || e === 'thoughtful' || e === 'متفکر') {
+  }
+  if (e === 'medium' || e === 'thoughtful' || e === 'متفکر') {
     return { level: 'medium', label: 'متفکر (Thoughtful)', reasoning_effort: 'medium' };
-  } else if (e === 'low' || e === 'fast' || e === 'quick' || e === 'سریع' || e === 'none' || e === 'off') {
+  }
+  if (e === 'low' || e === 'fast' || e === 'quick' || e === 'سریع' || e === 'none' || e === 'off') {
     return { level: 'none', label: 'سریع (Fast)', reasoning_effort: undefined };
   }
+
+  // Intelligent model-aware defaults when no explicit effort is passed
+  const mk = (modelKey || '').toLowerCase();
+  if (mk.includes('opus')) {
+    return { level: 'xhigh', label: 'خیلی عمیق (Extra High)', reasoning_effort: 'xhigh' };
+  }
+  if (mk.includes('argon') || mk.includes('sol') || mk.includes('terra') || mk.includes('sonnet') || mk.includes('fable') || mk.includes('astra')) {
+    return { level: 'high', label: 'عمیق (Deep)', reasoning_effort: 'high' };
+  }
+  if (mk.includes('kimi') || mk.includes('glm')) {
+    return { level: 'max', label: 'حداکثر (Maximum Reasoning)', reasoning_effort: 'max' };
+  }
+  if (mk.includes('haiku') || mk.includes('flash') || mk.includes('lite') || mk.includes('luna')) {
+    return { level: 'medium', label: 'متفکر (Thoughtful)', reasoning_effort: 'medium' };
+  }
+
   return { level: 'high', label: 'عمیق (Deep)', reasoning_effort: 'high' };
 }
 
@@ -863,7 +892,7 @@ export async function askGapChat({
   timeoutMs = 300000
 }) {
   const primaryModelConfig = resolveModel(model);
-  const effortConfig = resolveEffort(effort);
+  const effortConfig = resolveEffort(effort, primaryModelConfig.key);
   // Allow up to 15 minutes (900,000ms) for heavy reasoning or deep coding models
   const isHeavyModel = primaryModelConfig.key.includes('opus') || primaryModelConfig.key.includes('o1') || primaryModelConfig.key.includes('o3') || primaryModelConfig.key.includes('pro');
   const effectiveTimeout = (timeoutMs === 300000 && (isHeavyModel || effort === 'deep' || effort === 'thoughtful' || effort === 'high')) ? 900000 : timeoutMs;
