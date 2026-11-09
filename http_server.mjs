@@ -1,4 +1,7 @@
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   askGapChat,
   getQuota,
@@ -9,9 +12,42 @@ import {
   checkAndAutoRenewToken
 } from './gap_chat.mjs';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const BRIDGE_API_KEY = (process.env.BRIDGE_API_KEY || '').trim();
+
+// Excluded Conversation IDs (Strict Confidentiality Blacklist)
+const EXCLUSIONS_FILE = path.join(__dirname, 'exclusions.json');
+let excludedIds = [
+  '5e07464b-76f3-42d5-a404-68b6a7e6b7cc',
+  '388ebb05-83bc-4615-a0d3-0168772d3efe',
+  '54ac95a2-6fc0-41aa-99b2-8140e915fc36',
+  'ea524caf-adbb-44c0-b054-5f204b5cb7c0'
+];
+
+function loadExclusions() {
+  try {
+    if (fs.existsSync(EXCLUSIONS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(EXCLUSIONS_FILE, 'utf-8'));
+      if (Array.isArray(data.excluded_conversation_ids)) {
+        for (const id of data.excluded_conversation_ids) {
+          if (!excludedIds.includes(id)) excludedIds.push(id);
+        }
+      }
+    }
+  } catch (e) {}
+}
+loadExclusions();
+
+function checkExclusion(payload) {
+  if (!payload) return null;
+  const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  for (const id of excludedIds) {
+    if (str.includes(id)) return id;
+  }
+  return null;
+}
 
 if (!BRIDGE_API_KEY) {
   console.warn('⚠️  [SECURITY WARNING] BRIDGE_API_KEY is not set! Running in open public mode.');
@@ -86,9 +122,10 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, {
       status: 'ok',
       service: 'GapGPT-Bridge-HTTP',
-      version: '1.4.0',
+      version: '1.5.0',
       auth_enabled: !!BRIDGE_API_KEY,
-      features: ['openai-compatible', 'streaming-sse', 'multimodal-vision', 'auto-token-renew'],
+      features: ['openai-compatible', 'streaming-sse', 'multimodal-vision', 'auto-token-renew', 'conversation-exclusions'],
+      excluded_conversations_count: excludedIds.length,
       timestamp: new Date().toISOString()
     });
   }
@@ -105,6 +142,35 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    // Exclusions endpoints
+    if (pathname === '/exclusions' && req.method === 'GET') {
+      loadExclusions();
+      return sendJson(res, 200, {
+        status: 'ok',
+        count: excludedIds.length,
+        excluded_conversation_ids: excludedIds
+      });
+    }
+
+    if (pathname === '/exclusions' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const newId = (body.conversation_id || body.id || '').trim();
+      if (!newId) {
+        return sendJson(res, 400, { error: 'Missing conversation_id to exclude' });
+      }
+      if (!excludedIds.includes(newId)) {
+        excludedIds.push(newId);
+        try {
+          fs.writeFileSync(EXCLUSIONS_FILE, JSON.stringify({ excluded_conversation_ids: excludedIds }, null, 2), 'utf-8');
+        } catch (e) {}
+      }
+      return sendJson(res, 200, {
+        status: 'ok',
+        message: `Conversation ID [${newId}] added to exclusion list`,
+        excluded_conversation_ids: excludedIds
+      });
+    }
+
     // Auth and token expiration check
     if (pathname === '/auth/status' && req.method === 'GET') {
       const info = getTokenExpiryInfo();
@@ -138,9 +204,23 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, quota);
     }
 
-    // Direct Ask endpoint (Supports prompt and images array)
+    // Direct Ask endpoint (Supports prompt, images, and exclusion enforcement)
     if (pathname === '/ask' && req.method === 'POST') {
       const body = await readJsonBody(req);
+
+      // Enforce Exclusion Firewall Check
+      const blockedId = checkExclusion(body);
+      if (blockedId) {
+        return sendJson(res, 403, {
+          error: {
+            message: `Blocked by server policy: Conversation ID [${blockedId}] is strictly confidential and excluded from GapGPT delegation.`,
+            type: 'delegation_forbidden',
+            code: 'conversation_excluded',
+            excluded_id: blockedId
+          }
+        });
+      }
+
       const { prompt, model, effort, conversation_id, images } = body;
       if (!prompt && (!images || images.length === 0)) {
         return sendJson(res, 400, { error: 'Missing required field: prompt or images' });
@@ -155,9 +235,23 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, result);
     }
 
-    // OpenAI-compatible Chat Completions (/v1/chat/completions with Multimodal / Vision)
+    // OpenAI-compatible Chat Completions (/v1/chat/completions with Exclusion Check)
     if (pathname === '/v1/chat/completions' && req.method === 'POST') {
       const body = await readJsonBody(req);
+
+      // Enforce Exclusion Firewall Check
+      const blockedId = checkExclusion(body);
+      if (blockedId) {
+        return sendJson(res, 403, {
+          error: {
+            message: `Blocked by server policy: Conversation ID [${blockedId}] is strictly confidential and excluded from GapGPT delegation.`,
+            type: 'delegation_forbidden',
+            code: 'conversation_excluded',
+            excluded_id: blockedId
+          }
+        });
+      }
+
       const messages = body.messages || [];
       const model = body.model || 'claude-opus';
 
@@ -198,38 +292,33 @@ const server = http.createServer(async (req, res) => {
         });
 
         const chatId = `chatcmpl-${Date.now()}`;
-        const created = Math.floor(Date.now() / 1000);
-
-        const onChunk = (text) => {
-          const chunkPayload = {
-            id: chatId,
-            object: 'chat.completion.chunk',
-            created: created,
-            model: model,
-            choices: [
-              {
-                index: 0,
-                delta: { content: text },
-                finish_reason: null
-              }
-            ]
-          };
-          res.write(`data: ${JSON.stringify(chunkPayload)}\n\n`);
-        };
-
         try {
           const result = await askGapChat({
             prompt,
             model,
             effort: 'high',
-            images,
-            onChunk
+            images
           });
 
-          const stopPayload = {
+          const chunk = {
             id: chatId,
             object: 'chat.completion.chunk',
-            created: created,
+            created: Math.floor(Date.now() / 1000),
+            model: result.model || model,
+            choices: [
+              {
+                index: 0,
+                delta: { content: result.response || '' },
+                finish_reason: null
+              }
+            ]
+          };
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+
+          const doneChunk = {
+            id: chatId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
             model: result.model || model,
             choices: [
               {
@@ -239,11 +328,12 @@ const server = http.createServer(async (req, res) => {
               }
             ]
           };
-          res.write(`data: ${JSON.stringify(stopPayload)}\n\n`);
+          res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
           res.write('data: [DONE]\n\n');
           return res.end();
-        } catch (err) {
-          res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        } catch (streamErr) {
+          const errChunk = { error: { message: streamErr.message } };
+          res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
           return res.end();
         }
       }

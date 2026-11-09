@@ -3,9 +3,63 @@ import readline from 'readline';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BASE_URL = process.env.GAPGPT_BASE_URL || 'https://gapgpt.desktopcenter.ir';
 const API_KEY = process.env.BRIDGE_API_KEY || 'gapgpt_live_sk_7f8d9b1a4c02';
+
+// Confidential Conversation IDs (Exclusion List)
+const EXCLUSIONS_FILE = path.join(__dirname, 'exclusions.json');
+let defaultExcludedIds = [
+  '5e07464b-76f3-42d5-a404-68b6a7e6b7cc',
+  '388ebb05-83bc-4615-a0d3-0168772d3efe',
+  '54ac95a2-6fc0-41aa-99b2-8140e915fc36',
+  'ea524caf-adbb-44c0-b054-5f204b5cb7c0'
+];
+
+function getExcludedConversationIds() {
+  const ids = [...defaultExcludedIds];
+  try {
+    if (fs.existsSync(EXCLUSIONS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(EXCLUSIONS_FILE, 'utf-8'));
+      if (Array.isArray(data.excluded_conversation_ids)) {
+        for (const id of data.excluded_conversation_ids) {
+          if (!ids.includes(id)) ids.push(id);
+        }
+      }
+    }
+  } catch (e) {}
+  return ids;
+}
+
+function checkExclusion(payload) {
+  if (!payload) return null;
+  const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const excluded = getExcludedConversationIds();
+  for (const id of excluded) {
+    if (str.includes(id)) {
+      return id;
+    }
+  }
+  return null;
+}
+
+function addExcludedId(newId) {
+  const cleanId = (newId || '').trim();
+  if (!cleanId) return getExcludedConversationIds();
+  const current = getExcludedConversationIds();
+  if (!current.includes(cleanId)) {
+    current.push(cleanId);
+    try {
+      fs.writeFileSync(EXCLUSIONS_FILE, JSON.stringify({
+        description: "List of confidential Antigravity Conversation IDs that are strictly forbidden from being delegated or sent to GapGPT.",
+        excluded_conversation_ids: current
+      }, null, 2), 'utf-8');
+    } catch (e) {}
+  }
+  return current;
+}
 
 function getGapCodeBinary() {
   if (process.env.GAPCODE_BIN && fs.existsSync(process.env.GAPCODE_BIN)) {
@@ -72,7 +126,6 @@ function executeGapCodeTask({ task, workspace, model = 'gpt-6-astra', timeoutSec
       return reject(new Error(`Failed to launch GapCode binary (${binPath}): ${err.message}`));
     }
 
-    // Feed empty stdin so non-interactive exec does not hang
     child.stdin.end('');
 
     child.stdout.on('data', data => { stdout += data.toString('utf-8'); });
@@ -87,7 +140,6 @@ function executeGapCodeTask({ task, workspace, model = 'gpt-6-astra', timeoutSec
       clearTimeout(timer);
       const durationMs = Date.now() - startTime;
       
-      // Parse execution tokens if present
       let tokensUsed = null;
       const tokenMatch = stdout.match(/tokens used\s*([\d,]+)/i) || stderr.match(/tokens used\s*([\d,]+)/i);
       if (tokenMatch) {
@@ -188,7 +240,7 @@ rl.on('line', async (line) => {
       tools: [
         {
           name: 'ask_gapgpt_chat',
-          description: '[GapChat Engine] Delegate deep reasoning, architecture planning, code review, or Multimodal / Vision image analysis to GapGPT Chat (Claude Opus 5.5, Sonnet 5.5, GPT-6, DeepSeek) via https://gapgpt.desktopcenter.ir using free 3-hour chat quota (300 msgs / 3h). Does not modify files or execute terminal commands directly.',
+          description: '[GapChat Engine] Delegate deep reasoning, architecture planning, code review, or Multimodal / Vision image analysis to GapGPT Chat (Claude Opus 5.5, Sonnet 5.5, GPT-6, DeepSeek) via https://gapgpt.desktopcenter.ir using free 3-hour chat quota (300 msgs / 3h). Strictly blocked for confidential excluded conversation IDs.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -215,7 +267,7 @@ rl.on('line', async (line) => {
         },
         {
           name: 'run_gapcode_task',
-          description: '[GapCode Engine] Delegate an AUTONOMOUS EXECUTION task directly to GapCode. GapCode independently enters the workspace directory, reads/edits code files, runs shell/terminal commands, performs builds, and resolves errors without manual intervention.',
+          description: '[GapCode Engine] Delegate an AUTONOMOUS EXECUTION task directly to GapCode. GapCode independently enters the workspace directory, reads/edits code files, runs shell/terminal commands, performs builds, and resolves errors without manual intervention. Strictly blocked for confidential excluded conversation IDs.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -245,6 +297,25 @@ rl.on('line', async (line) => {
           }
         },
         {
+          name: 'manage_gapgpt_exclusions',
+          description: 'Check or add confidential Antigravity Conversation IDs to the exclusion blacklist. Excluded IDs are strictly blocked from being sent or delegated to GapGPT.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string',
+                enum: ['list', 'add'],
+                description: 'Action to perform: "list" to view excluded IDs, or "add" to add a new ID.'
+              },
+              conversation_id: {
+                type: 'string',
+                description: 'The Conversation ID to add (required if action is "add").'
+              }
+            },
+            required: ['action']
+          }
+        },
+        {
           name: 'get_gapgpt_quota',
           description: 'Check current GapGPT chat quota, 3-hour limits, and daily availability.',
           inputSchema: { type: 'object', properties: {} }
@@ -267,6 +338,22 @@ rl.on('line', async (line) => {
     const { name, arguments: args } = params || {};
     try {
       if (name === 'ask_gapgpt_chat') {
+        // Enforce Exclusion Firewall Check
+        const blockedId = checkExclusion(args.prompt) || checkExclusion(args.conversation_id);
+        if (blockedId) {
+          return sendResponse(id, {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                status: 'blocked',
+                delegation_blocked: true,
+                excluded_conversation_id: blockedId,
+                message: `⛔ DELEGATION BLOCKED BY POLICY: Conversation ID [${blockedId}] is on the strict internal-only exclusion list. Do not delegate this task to GapGPT; you MUST process it directly within Antigravity using internal models.`
+              }, null, 2)
+            }]
+          });
+        }
+
         const data = await apiRequest('/ask', 'POST', {
           prompt: args.prompt,
           model: args.model || 'claude-opus',
@@ -276,6 +363,22 @@ rl.on('line', async (line) => {
         });
         return sendResponse(id, { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
       } else if (name === 'run_gapcode_task') {
+        // Enforce Exclusion Firewall Check
+        const blockedId = checkExclusion(args.task) || checkExclusion(args.workspace);
+        if (blockedId) {
+          return sendResponse(id, {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                status: 'blocked',
+                delegation_blocked: true,
+                excluded_conversation_id: blockedId,
+                message: `⛔ TASK EXECUTION BLOCKED BY POLICY: Conversation ID [${blockedId}] is on the strict internal-only exclusion list. Do not delegate this task to GapCode; you MUST process it directly within Antigravity.`
+              }, null, 2)
+            }]
+          });
+        }
+
         const result = await executeGapCodeTask({
           task: args.task,
           workspace: args.workspace,
@@ -284,6 +387,35 @@ rl.on('line', async (line) => {
           bypassSandbox: args.dangerously_bypass_sandbox !== false
         });
         return sendResponse(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
+      } else if (name === 'manage_gapgpt_exclusions') {
+        const action = args.action || 'list';
+        if (action === 'add') {
+          const updated = addExcludedId(args.conversation_id);
+          // Try to sync with server
+          try {
+            await apiRequest('/exclusions', 'POST', { conversation_id: args.conversation_id });
+          } catch (e) {}
+          return sendResponse(id, {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                status: 'success',
+                message: `Conversation ID [${args.conversation_id}] added to exclusion blacklist`,
+                excluded_conversation_ids: updated
+              }, null, 2)
+            }]
+          });
+        } else {
+          return sendResponse(id, {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                status: 'ok',
+                excluded_conversation_ids: getExcludedConversationIds()
+              }, null, 2)
+            }]
+          });
+        }
       } else if (name === 'get_gapgpt_quota') {
         const data = await apiRequest('/quota', 'GET');
         return sendResponse(id, { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });

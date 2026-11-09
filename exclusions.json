@@ -1,0 +1,9 @@
+{
+  "description": "List of confidential Antigravity Conversation IDs that are strictly forbidden from being delegated or sent to GapGPT (GapChat or GapCode). These must be processed solely inside Antigravity.",
+  "excluded_conversation_ids": [
+    "5e07464b-76f3-42d5-a404-68b6a7e6b7cc",
+    "388ebb05-83bc-4615-a0d3-0168772d3efe",
+    "54ac95a2-6fc0-41aa-99b2-8140e915fc36",
+    "ea524caf-adbb-44c0-b054-5f204b5cb7c0"
+  ]
+}
