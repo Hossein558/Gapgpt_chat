@@ -34,7 +34,26 @@ export function getTokens() {
     return { accessToken: liveAccessToken, refreshToken: liveRefreshToken };
   }
 
-  // 2. Local token file (.token)
+  // 2. Read from .env if present
+  const envFile = path.join(__dirname, '.env');
+  if (fs.existsSync(envFile)) {
+    try {
+      const lines = fs.readFileSync(envFile, 'utf-8').split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('GAPGPT_TOKEN=')) {
+          liveAccessToken = trimmed.split('=')[1].trim();
+        } else if (trimmed.startsWith('GAPGPT_REFRESH_TOKEN=')) {
+          liveRefreshToken = trimmed.split('=')[1].trim();
+        }
+      }
+      if (liveAccessToken) {
+        return { accessToken: liveAccessToken, refreshToken: liveRefreshToken || '' };
+      }
+    } catch {}
+  }
+
+  // 3. Local token file (.token)
   const tokenFile = path.join(__dirname, '.token');
   if (fs.existsSync(tokenFile)) {
     try {
@@ -319,22 +338,110 @@ export async function uploadImageToGapGPT(imageInput) {
 }
 
 export function resolveModel(modelName) {
-  const m = (modelName || 'claude-opus').toLowerCase();
+  const m = (modelName || 'claude-opus').toLowerCase().trim();
+
+  // 1. Google Gemini Suite
+  if (m.includes('gemini-2') || m === 'gemini-2.0-flash' || m === 'gemini-2.0') {
+    return { key: 'gemini-2.0-flash', bot_name: 'A-GEMINI-2.0-FLASH', mode: '', name: 'Google Gemini 2.0 Flash' };
+  }
+  if (m.includes('1.5-pro') || m === 'gemini-1.5-pro') {
+    return { key: 'gemini-1.5-pro', bot_name: 'A-GEMINI', mode: '1.5-pro', name: 'Google Gemini 1.5 Pro' };
+  }
+  if (m.includes('8b') || m.includes('1.5-flash-8b') || m === 'gemini-1.5-flash-8b') {
+    return { key: 'gemini-1.5-flash-8b', bot_name: 'A-GEMINI', mode: '1.5-flash-8b', name: 'Google Gemini 1.5 Flash-8B' };
+  }
+  if (m.includes('1.5-flash') || m === 'gemini-1.5-flash' || m === 'gemini-1.5') {
+    return { key: 'gemini-1.5-flash', bot_name: 'A-GEMINI', mode: '1.5-flash', name: 'Google Gemini 1.5 Flash' };
+  }
+  if (m === 'gemini-pro') {
+    return { key: 'gemini-pro', bot_name: 'A-GEMINI', mode: 'pro', name: 'Google Gemini Pro' };
+  }
+  if (m === 'gemini-flash') {
+    return { key: 'gemini-flash', bot_name: 'A-GEMINI', mode: 'flash', name: 'Google Gemini Flash' };
+  }
+  if (m.includes('gemini')) {
+    return { key: 'gemini-2.0-flash', bot_name: 'A-GEMINI-2.0-FLASH', mode: '', name: 'Google Gemini 2.0 Flash' };
+  }
+
+  // 2. OpenAI Reasoning (o1 / o3)
+  if (m.includes('o1-mini')) {
+    return { key: 'o1-mini', bot_name: 'A-O1-MINI', mode: '', name: 'OpenAI o1-mini' };
+  }
+  if (m === 'o1' || m.includes('openai-o1')) {
+    return { key: 'o1', bot_name: 'A-O1', mode: '', name: 'OpenAI o1' };
+  }
+  if (m.includes('o3-mini')) {
+    return { key: 'o3-mini', bot_name: 'A-O3-MINI', mode: '', name: 'OpenAI o3-mini' };
+  }
+  if (m === 'o3' || m.includes('openai-o3')) {
+    return { key: 'o3', bot_name: 'A-O3', mode: '', name: 'OpenAI o3' };
+  }
+
+  // 3. OpenAI Flagship / GPT-6 / GPT-4
+  if (m.includes('terra')) {
+    return { key: 'gpt-6.1-terra', bot_name: 'A-GPT-5.6-TERRA', mode: '', name: 'GPT-6.1 Terra' };
+  }
+  if (m.includes('sol')) {
+    return { key: 'gpt-6.1-sol', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GPT-6.1 Sol' };
+  }
+  if (m.includes('luna')) {
+    return { key: 'gpt-6-luna', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GPT-6 Luna' };
+  }
+  if (m.includes('astra') || m.includes('gpt-6') || m.includes('gpt-4') || m.includes('chatgpt') || m.includes('openai')) {
+    return { key: 'gpt-6-astra', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GPT-6 Astra' };
+  }
+
+  // 4. Anthropic Claude Suite
   if (m.includes('opus')) {
     return { key: 'claude-opus', bot_name: 'A-CLAUDE', mode: 'opus', name: 'Claude Opus 5.5' };
-  } else if (m.includes('fable')) {
-    return { key: 'claude-fable', bot_name: 'A-CLAUDE', mode: 'fable', name: 'Claude Fable 5' };
-  } else if (m.includes('sonnet') || m.includes('claude')) {
-    return { key: 'claude-sonnet', bot_name: 'A-CLAUDE', mode: 'sonnet', name: 'Claude Sonnet 5.5' };
-  } else if (m.includes('terra')) {
-    return { key: 'gpt-terra', bot_name: 'A-GPT-5.6-TERRA', mode: '', name: 'GPT-6.1 Terra' };
-  } else if (m.includes('astra') || m.includes('gpt-6')) {
-    return { key: 'gpt-6-astra', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GPT-6 Astra' };
-  } else if (m.includes('deepseek')) {
-    return { key: 'deepseek', bot_name: 'A-DEEPSEEK', mode: '', name: 'DeepSeek' };
-  } else if (m.includes('gemini')) {
-    return { key: 'gemini', bot_name: 'A-GEMINI', mode: '', name: 'Gemini' };
   }
+  if (m.includes('fable')) {
+    return { key: 'claude-fable', bot_name: 'A-CLAUDE', mode: 'fable', name: 'Claude Fable 5' };
+  }
+  if (m.includes('haiku')) {
+    return { key: 'claude-haiku', bot_name: 'A-CLAUDE', mode: 'haiku', name: 'Claude Haiku 4.5' };
+  }
+  if (m.includes('sonnet') || m.includes('claude')) {
+    return { key: 'claude-sonnet', bot_name: 'A-CLAUDE', mode: 'sonnet', name: 'Claude Sonnet 5.5' };
+  }
+
+  // 5. DeepSeek Suite
+  if (m.includes('r1')) {
+    return { key: 'deepseek-r1', bot_name: 'A-DEEPSEEK-R1', mode: '', name: 'DeepSeek R1' };
+  }
+  if (m.includes('v3')) {
+    return { key: 'deepseek-v3', bot_name: 'A-DEEPSEEK-V3', mode: '', name: 'DeepSeek V3' };
+  }
+  if (m.includes('deepseek')) {
+    return { key: 'deepseek', bot_name: 'A-DEEPSEEK', mode: '', name: 'DeepSeek Auto' };
+  }
+
+  // 6. xAI Grok
+  if (m.includes('grok-2')) {
+    return { key: 'grok-2', bot_name: 'A-GROK-2', mode: '', name: 'Grok 2' };
+  }
+  if (m.includes('grok')) {
+    return { key: 'grok', bot_name: 'A-GROK', mode: '', name: 'xAI Grok' };
+  }
+
+  // 7. Alibaba Qwen
+  if (m.includes('qwen')) {
+    return { key: 'qwen-3', bot_name: 'A-QWEN-3', mode: '', name: 'Alibaba Qwen 3' };
+  }
+
+  // 8. Perplexity
+  if (m.includes('perplexity') || m.includes('sonar')) {
+    return { key: 'perplexity', bot_name: 'A-PERPLEXITY', mode: '', name: 'Perplexity Sonar' };
+  }
+
+  // 9. Other Asian LLMs (Kimi / GLM)
+  if (m.includes('kimi')) {
+    return { key: 'kimi-3', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'Kimi 3' };
+  }
+  if (m.includes('glm')) {
+    return { key: 'glm-5.3', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GLM 5.3' };
+  }
+
   return { key: 'claude-opus', bot_name: 'A-CLAUDE', mode: 'opus', name: 'Claude Opus 5.5' };
 }
 
@@ -395,6 +502,7 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
     let reasoning = '';
     let chunkDone = false;
     let messagesRemaining = null;
+    let streamedChars = 0;
 
     function cleanup() {
       if (timer) clearTimeout(timer);
@@ -410,6 +518,11 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
 
       resolved = true;
       cleanup();
+
+      if (onChunk && finalText.length > streamedChars) {
+        onChunk(finalText.slice(streamedChars));
+        streamedChars = finalText.length;
+      }
 
       // Separate any embedded thinking / reasoning
       let cleanReasoning = reasoning.trim();
@@ -548,6 +661,7 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
           if (!targetMessageToken || data.mtoken === targetMessageToken) {
             if (data.text) {
               streamText += data.text;
+              streamedChars += data.text.length;
               if (onChunk) onChunk(data.text);
               // Keep stream alive: reset to idle timeout while chunks are arriving
               if (timer) clearTimeout(timer);
@@ -575,6 +689,12 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
 
             if (Array.isArray(m.response)) {
               for (const r of m.response) {
+                if (r.type === 'loading' && r.icon === 'error') {
+                  const errMsg = r.caption || r.title || 'GapGPT response error';
+                  cleanup();
+                  resolved = true;
+                  return reject(new Error(errMsg));
+                }
                 if (r.type === 'text' && r.content) {
                   fullResponse = r.content;
                 } else if (r.type === 'reasoning' && r.content) {
@@ -583,7 +703,13 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
               }
             }
 
-            const isDone = m.completed_at || chunkDone || (m.status === 'done');
+            if (fullResponse && onChunk && fullResponse.length > streamedChars) {
+              const delta = fullResponse.slice(streamedChars);
+              streamedChars += delta.length;
+              onChunk(delta);
+            }
+
+            const isDone = m.completed_at || chunkDone || (m.status === 'completed') || (m.status === 'done');
             if (isDone && (fullResponse || streamText)) {
               tryResolve();
             }
@@ -689,6 +815,30 @@ export async function askGapChat({
       response: ''
     };
   } catch (err) {
+    if (autoFallback) {
+      console.warn(`⚠️ [AUTO-FALLBACK] Primary model ${primaryModelConfig.name} encountered an error: ${err.message}. Engaging fallback chain...`);
+      for (const fallbackKey of fallbackCandidates) {
+        if (fallbackKey === primaryModelConfig.key) continue;
+        const fbModelConfig = resolveModel(fallbackKey);
+        try {
+          const fbRes = await executeSocketQuery({
+            prompt,
+            modelConfig: fbModelConfig,
+            effortConfig: resolveEffort('medium'),
+            chatId,
+            fileTokens,
+            onChunk,
+            timeoutMs: 60000
+          });
+          if (fbRes.status === 'ok') {
+            fbRes.fallback_used = true;
+            fbRes.original_model = primaryModelConfig.name;
+            fbRes.fallback_note = `مدل انتخابی (${primaryModelConfig.name}) موقتاً با خطا مواجه شد؛ پاسخ توسط مدل جایگزین ${fbRes.model} تولید گردید.`;
+            return fbRes;
+          }
+        } catch {}
+      }
+    }
     throw err;
   }
 }

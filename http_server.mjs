@@ -287,57 +287,80 @@ const server = http.createServer(async (req, res) => {
       if (body.stream) {
         res.writeHead(200, {
           'Content-Type': 'text/event-stream; charset=utf-8',
-          'Cache-Control': 'no-cache',
+          'Cache-Control': 'no-cache, no-transform',
           'Connection': 'keep-alive',
           'X-Accel-Buffering': 'no',
           'Access-Control-Allow-Origin': '*'
         });
 
         const chatId = `chatcmpl-${Date.now()}`;
+        // Heartbeat keep-alive ping every 5 seconds to prevent proxy / client idle timeout
+        const pingInterval = setInterval(() => {
+          if (!res.writableEnded) {
+            res.write(': ping\n\n');
+          }
+        }, 5000);
+
         try {
           const result = await askGapChat({
             prompt,
             model,
             effort: 'high',
-            images
+            images,
+            onChunk: (chunkText) => {
+              if (res.writableEnded) return;
+              const chunk = {
+                id: chatId,
+                object: 'chat.completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model: model,
+                choices: [
+                  {
+                    index: 0,
+                    delta: { content: chunkText },
+                    finish_reason: null
+                  }
+                ]
+              };
+              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            }
           });
 
-          const chunk = {
-            id: chatId,
-            object: 'chat.completion.chunk',
-            created: Math.floor(Date.now() / 1000),
-            model: result.model || model,
-            choices: [
-              {
-                index: 0,
-                delta: { content: result.response || '' },
-                finish_reason: null
-              }
-            ]
-          };
-          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          clearInterval(pingInterval);
 
-          const doneChunk = {
-            id: chatId,
-            object: 'chat.completion.chunk',
-            created: Math.floor(Date.now() / 1000),
-            model: result.model || model,
-            choices: [
-              {
-                index: 0,
-                delta: {},
-                finish_reason: 'stop'
-              }
-            ]
-          };
-          res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
-          res.write('data: [DONE]\n\n');
-          return res.end();
+          if (!res.writableEnded) {
+            const doneChunk = {
+              id: chatId,
+              object: 'chat.completion.chunk',
+              created: Math.floor(Date.now() / 1000),
+              model: result.model || model,
+              choices: [
+                {
+                  index: 0,
+                  delta: {},
+                  finish_reason: 'stop'
+                }
+              ]
+            };
+            res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
+            res.write('data: [DONE]\n\n');
+            return res.end();
+          }
         } catch (streamErr) {
-          const errChunk = { error: { message: streamErr.message } };
-          res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
-          return res.end();
+          clearInterval(pingInterval);
+          if (!res.writableEnded) {
+            const errChunk = {
+              error: {
+                message: streamErr.message,
+                type: 'server_error',
+                code: 'stream_error'
+              }
+            };
+            res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
+            return res.end();
+          }
         }
+        return;
       }
 
       // Non-streaming response
@@ -377,17 +400,73 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // Models list (/v1/models)
+    // Models list (/v1/models) - Full 46 models suite
     if (pathname === '/v1/models' && req.method === 'GET') {
       return sendJson(res, 200, {
         object: 'list',
         data: [
-          { id: 'claude-opus', object: 'model', name: 'Claude Opus 5.5 (Vision & Deep Reasoning)' },
-          { id: 'claude-sonnet', object: 'model', name: 'Claude Sonnet 5.5 (Vision)' },
-          { id: 'claude-fable', object: 'model', name: 'Claude Fable 5' },
-          { id: 'gpt-6-astra', object: 'model', name: 'GPT-6 Astra (Vision)' },
-          { id: 'gpt-terra', object: 'model', name: 'GPT-6.1 Terra' },
-          { id: 'deepseek', object: 'model', name: 'DeepSeek' }
+          // 1. Google Gemini Suite
+          { id: 'gemini-2.0-flash', object: 'model', name: 'Google Gemini 2.0 Flash (Fast Multimodal)' },
+          { id: 'gemini-1.5-pro', object: 'model', name: 'Google Gemini 1.5 Pro (Massive Context & Deep Analysis)' },
+          { id: 'gemini-1.5-flash', object: 'model', name: 'Google Gemini 1.5 Flash (Lightweight & Fast)' },
+          { id: 'gemini-1.5-flash-8b', object: 'model', name: 'Google Gemini 1.5 Flash 8B (High Efficiency)' },
+          { id: 'gemini-pro', object: 'model', name: 'Google Gemini Pro' },
+          { id: 'gemini-flash', object: 'model', name: 'Google Gemini Flash' },
+          { id: 'gemini', object: 'model', name: 'Google Gemini (Auto)' },
+
+          // 2. OpenAI GPT & Reasoning Suite
+          { id: 'gpt-6-astra', object: 'model', name: 'GPT-6 Astra (Flagship Coding & Execution)' },
+          { id: 'gpt-6.1-terra', object: 'model', name: 'GPT-6.1 Terra (Architecture & Reasoning)' },
+          { id: 'gpt-6.1-sol', object: 'model', name: 'GPT-6.1 Sol (Agentic Workflow)' },
+          { id: 'gpt-6-luna', object: 'model', name: 'GPT-6 Luna (Optimized Fast Reasoning)' },
+          { id: 'o1', object: 'model', name: 'OpenAI o1 (Deep Deliberate Reasoning)' },
+          { id: 'o1-mini', object: 'model', name: 'OpenAI o1-mini (STEM & Fast Reasoning)' },
+          { id: 'o3', object: 'model', name: 'OpenAI o3 (Advanced Multi-Step Thinking)' },
+          { id: 'o3-mini', object: 'model', name: 'OpenAI o3-mini (High-Speed Reasoning)' },
+          { id: 'gpt-4o', object: 'model', name: 'OpenAI GPT-4o (Omni Multimodal)' },
+          { id: 'gpt-4o-mini', object: 'model', name: 'OpenAI GPT-4o Mini' },
+          { id: 'gpt-4-turbo', object: 'model', name: 'OpenAI GPT-4 Turbo' },
+          { id: 'chatgpt', object: 'model', name: 'ChatGPT 4o (Standard)' },
+
+          // 3. Anthropic Claude Suite
+          { id: 'claude-opus', object: 'model', name: 'Claude Opus 5.5 (Master Reasoning & Coding)' },
+          { id: 'claude-opus-5-5', object: 'model', name: 'Claude Opus 5.5 (Direct)' },
+          { id: 'claude-sonnet', object: 'model', name: 'Claude Sonnet 5.5 (High Speed & Multimodal)' },
+          { id: 'claude-sonnet-5-5', object: 'model', name: 'Claude Sonnet 5.5 (Direct)' },
+          { id: 'claude-fable', object: 'model', name: 'Claude Fable 5 (Creative & Writing)' },
+          { id: 'claude-fable-5', object: 'model', name: 'Claude Fable 5 (Direct)' },
+          { id: 'claude-haiku', object: 'model', name: 'Claude Haiku 4.5 (Lightweight & Fast)' },
+          { id: 'claude-3-5-sonnet', object: 'model', name: 'Claude 3.5 Sonnet' },
+          { id: 'claude-3-5-haiku', object: 'model', name: 'Claude 3.5 Haiku' },
+
+          // 4. DeepSeek Suite
+          { id: 'deepseek-r1', object: 'model', name: 'DeepSeek R1 (Open Reasoning Benchmark)' },
+          { id: 'deepseek-v3', object: 'model', name: 'DeepSeek V3 (General Flagship)' },
+          { id: 'deepseek', object: 'model', name: 'DeepSeek Auto (Intelligent Routing)' },
+          { id: 'deepseek-v4.1-flash', object: 'model', name: 'DeepSeek V4.1 Flash' },
+          { id: 'deepseek-coder', object: 'model', name: 'DeepSeek Coder' },
+
+          // 5. xAI Grok Suite
+          { id: 'grok-2', object: 'model', name: 'xAI Grok 2 (Realtime Knowledge)' },
+          { id: 'grok-4.6', object: 'model', name: 'xAI Grok 4.6 (Next-Gen Intelligence)' },
+          { id: 'grok', object: 'model', name: 'xAI Grok (Auto)' },
+          { id: 'grok-vision', object: 'model', name: 'xAI Grok 2 Vision' },
+
+          // 6. Alibaba Qwen Suite
+          { id: 'qwen-3', object: 'model', name: 'Alibaba Qwen 3 (Multilingual & Code)' },
+          { id: 'gapgpt-qwen-3.6', object: 'model', name: 'Alibaba Qwen 3.6' },
+          { id: 'qwen-2.5', object: 'model', name: 'Alibaba Qwen 2.5' },
+          { id: 'qwen-2.5-coder', object: 'model', name: 'Alibaba Qwen 2.5 Coder' },
+          { id: 'qwen-plus', object: 'model', name: 'Alibaba Qwen Plus' },
+
+          // 7. Search & Research AI
+          { id: 'perplexity', object: 'model', name: 'Perplexity Sonar (Live Web-Grounded Search)' },
+          { id: 'sonar-pro', object: 'model', name: 'Perplexity Sonar Pro' },
+          { id: 'sonar-medium', object: 'model', name: 'Perplexity Sonar Medium' },
+
+          // 8. Other Specialized Models
+          { id: 'kimi-3', object: 'model', name: 'Moonshot Kimi 3 (Long-Context Synthesis)' },
+          { id: 'glm-5.3', object: 'model', name: 'Zhipu GLM 5.3 (Bilingual Technical Reasoning)' }
         ]
       });
     }

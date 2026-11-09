@@ -14,4 +14,6 @@ services:
       - PORT=8080
       - HOST=0.0.0.0
     volumes:
+      - /opt/gapgpt-bridge/gap_chat.mjs:/app/gap_chat.mjs:ro
+      - /opt/gapgpt-bridge/http_server.mjs:/app/http_server.mjs:ro
       - /opt/gapgpt-bridge/exclusions.json:/app/exclusions.json:ro
