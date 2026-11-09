@@ -663,13 +663,13 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
               streamText += data.text;
               streamedChars += data.text.length;
               if (onChunk) onChunk(data.text);
-              // Keep stream alive: reset to idle timeout while chunks are arriving
+              // Keep stream alive: reset to idle timeout while chunks are actively arriving
               if (timer) clearTimeout(timer);
               timer = setTimeout(() => {
                 if (!resolved) {
                   tryResolve();
                 }
-              }, 45000);
+              }, 90000);
             }
             if (data.done) {
               chunkDone = true;
@@ -737,11 +737,13 @@ export async function askGapChat({
   images = [],
   autoFallback = true,
   onChunk = null,
-  timeoutMs = 120000
+  timeoutMs = 300000
 }) {
   const primaryModelConfig = resolveModel(model);
   const effortConfig = resolveEffort(effort);
-  const effectiveTimeout = (timeoutMs === 120000 && (effort === 'deep' || effort === 'thoughtful')) ? 300000 : timeoutMs;
+  // Allow up to 10 minutes (600,000ms) for heavy reasoning or deep coding models
+  const isHeavyModel = primaryModelConfig.key.includes('opus') || primaryModelConfig.key.includes('o1') || primaryModelConfig.key.includes('o3') || primaryModelConfig.key.includes('pro');
+  const effectiveTimeout = (timeoutMs === 300000 && (isHeavyModel || effort === 'deep' || effort === 'thoughtful' || effort === 'high')) ? 600000 : timeoutMs;
 
   // Upload images if any
   const fileTokens = [];
