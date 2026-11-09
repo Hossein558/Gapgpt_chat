@@ -273,27 +273,89 @@ const server = http.createServer(async (req, res) => {
       const messages = body.messages || [];
       const model = body.model || 'claude-opus';
 
-      // Parse multimodal messages (extract text and image_url)
-      const promptParts = [];
+      // Parse multimodal messages (extract text and image_url) with Smart Context Window
+      // GapGPT has a single-turn token/character limit (~25,000 chars). When conversations
+      // accumulate multiple massive scripts (80,000+ chars), we must prune older turns while
+      // strictly preserving the system prompt and the latest user prompt.
       const images = [];
+      const parsedMessages = [];
 
       for (const m of messages) {
         const role = m.role || 'user';
+        let textContent = '';
         if (typeof m.content === 'string') {
-          promptParts.push(`${role}: ${m.content}`);
+          textContent = m.content;
         } else if (Array.isArray(m.content)) {
           for (const part of m.content) {
             if (part.type === 'text' && part.text) {
-              promptParts.push(`${role}: ${part.text}`);
+              textContent += (textContent ? '\n' : '') + part.text;
             } else if (part.type === 'image_url') {
               const url = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
               if (url) images.push(url);
             }
           }
         }
+        if (textContent.trim()) {
+          parsedMessages.push({ role, content: textContent.trim() });
+        }
       }
 
-      const prompt = promptParts.join('\n\n') || (images.length > 0 ? 'Analyze the attached image(s)' : '');
+      // Context Window Budget: 22,000 characters total for GapGPT single-turn prompt
+      const MAX_CONTEXT_CHARS = 22000;
+      let prompt = '';
+
+      if (parsedMessages.length <= 1) {
+        prompt = parsedMessages.map(m => `${m.role}: ${m.content}`).join('\n\n');
+      } else {
+        const lastMsg = parsedMessages[parsedMessages.length - 1];
+        const lastFormatted = `${lastMsg.role}: ${lastMsg.content}`;
+        
+        let remainingBudget = MAX_CONTEXT_CHARS - lastFormatted.length;
+        const historyParts = [];
+
+        // Check for system prompt at the beginning
+        let systemPart = '';
+        let startIndex = 0;
+        if (parsedMessages[0].role === 'system') {
+          systemPart = `system: ${parsedMessages[0].content}`;
+          remainingBudget -= systemPart.length;
+          startIndex = 1;
+        }
+
+        // Walk backwards from second-to-last message to fill remaining budget
+        const reversedHistory = [];
+        for (let i = parsedMessages.length - 2; i >= startIndex; i--) {
+          const item = parsedMessages[i];
+          let itemText = item.content;
+          // If a single historical response is massive (e.g. 20KB code), trim the middle to save context
+          if (itemText.length > 3500) {
+            itemText = itemText.slice(0, 1500) + '\n\n... [محتوای میانی برای بهینه‌سازی طول کانتکست خلاصه شد] ...\n\n' + itemText.slice(-1500);
+          }
+          const formatted = `${item.role}: ${itemText}`;
+          if (formatted.length <= remainingBudget) {
+            reversedHistory.push(formatted);
+            remainingBudget -= formatted.length;
+          } else if (remainingBudget > 500) {
+            // Include tail of the message that fits
+            reversedHistory.push(`${item.role}: ... ` + formatted.slice(-remainingBudget));
+            remainingBudget = 0;
+            break;
+          } else {
+            break;
+          }
+        }
+
+        reversedHistory.reverse();
+        const allParts = [];
+        if (systemPart) allParts.push(systemPart);
+        allParts.push(...reversedHistory);
+        allParts.push(lastFormatted);
+        prompt = allParts.join('\n\n');
+      }
+
+      if (!prompt.trim() && images.length === 0) {
+        prompt = 'Analyze the attached image(s)';
+      }
 
       if (!prompt.trim() && images.length === 0) {
         return sendJson(res, 400, { error: 'No prompt, messages, or images provided' });

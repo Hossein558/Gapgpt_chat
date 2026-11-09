@@ -776,6 +776,10 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
             });
           }
 
+          if (data.status === 'token_limit') {
+            return fail(new Error('GapGPT error: ' + (data.message || 'طول ورودی بیش از حد مجاز است.')));
+          }
+
           if (data.status === 'invalid_request') {
             return fail(new Error('GapGPT error: ' + (data.message || 'invalid_request')));
           }
@@ -883,19 +887,47 @@ export async function askGapChat({
   // Fallback candidate chain
   const fallbackCandidates = ['claude-sonnet', 'deepseek'];
 
-  // Attempt primary
-  try {
-    const res = await executeSocketQuery({
-      prompt,
-      modelConfig: primaryModelConfig,
-      effortConfig,
-      chatId,
-      fileTokens,
-      onChunk,
-      timeoutMs: effectiveTimeout
-    });
+  // Attempt primary with auto-retry on pre-ACK transient socket drop
+  let res;
+  let primaryErr = null;
+  const maxAttempts = 2;
 
-    if (res.status === 'ok') {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      res = await executeSocketQuery({
+        prompt,
+        modelConfig: primaryModelConfig,
+        effortConfig,
+        chatId,
+        fileTokens,
+        onChunk,
+        timeoutMs: effectiveTimeout
+      });
+      primaryErr = null;
+      break;
+    } catch (err) {
+      primaryErr = err;
+      const isTransientDrop = /before acknowledgement|1006|WebSocket connection error/i.test(err.message);
+      if (attempt < maxAttempts && isTransientDrop && (!err.streamed_chars || err.streamed_chars === 0)) {
+        console.warn(`🔄 [RETRY] Primary model attempt ${attempt} failed (${err.message}). Retrying in 1.5s...`);
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+      break;
+    }
+  }
+
+  if (primaryErr) {
+    // If prompt exceeded token limit, fail cleanly with Iranian-friendly message
+    if (/token_limit|طول ورودی/i.test(primaryErr.message)) {
+      throw primaryErr;
+    }
+  }
+
+  try {
+    if (primaryErr) throw primaryErr;
+
+    if (res && res.status === 'ok') {
       return res;
     }
 
