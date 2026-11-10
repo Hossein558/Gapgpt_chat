@@ -273,7 +273,7 @@ rl.on('line', async (line) => {
               model: {
                 type: 'string',
                 enum: ['claude-opus', 'claude-sonnet', 'claude-haiku-5-5', 'claude-4-6-sonnet', 'claude-fable-5-1', 'claude-haiku', 'gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-pro', 'gemini-omni', 'gemini', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-5.4-pro', 'deepseek', 'grok-4.6', 'qwen-3'],
-                description: 'The model to use in Chat (default: claude-opus).'
+                description: 'The model to use in Chat (default: gpt-6-astra).'
               },
               effort: {
                 type: 'string',
@@ -381,7 +381,7 @@ rl.on('line', async (line) => {
 
         const data = await apiRequest('/ask', 'POST', {
           prompt: args.prompt,
-          model: args.model || 'claude-opus',
+          model: args.model || 'gpt-6-astra',
           effort: args.effort || 'high',
           images: args.images || [],
           conversation_id: args.conversation_id || ''

@@ -363,7 +363,7 @@ const server = http.createServer(async (req, res) => {
             id: chatId,
             object: 'chat.completion.chunk',
             created: Math.floor(Date.now() / 1000),
-            model: body.model || 'claude-opus',
+            model: body.model || 'gpt-6-astra',
             choices: [{ index: 0, delta: { content: internalResult }, finish_reason: null }]
           };
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
@@ -371,7 +371,7 @@ const server = http.createServer(async (req, res) => {
             id: chatId,
             object: 'chat.completion.chunk',
             created: Math.floor(Date.now() / 1000),
-            model: body.model || 'claude-opus',
+            model: body.model || 'gpt-6-astra',
             choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
           };
           res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
@@ -382,7 +382,7 @@ const server = http.createServer(async (req, res) => {
             id: `chatcmpl-${Date.now()}`,
             object: 'chat.completion',
             created: Math.floor(Date.now() / 1000),
-            model: body.model || 'claude-opus',
+            model: body.model || 'gpt-6-astra',
             choices: [
               {
                 index: 0,
@@ -401,7 +401,7 @@ const server = http.createServer(async (req, res) => {
       }
       const result = await askGapChat({
         prompt: prompt || 'Analyze this image',
-        model: model || 'claude-opus',
+        model: model || 'gpt-6-astra',
         effort: effort || undefined,
         chatId: conversation_id || '',
         images: images || []
@@ -442,7 +442,7 @@ const server = http.createServer(async (req, res) => {
             id: chatId,
             object: 'chat.completion.chunk',
             created: Math.floor(Date.now() / 1000),
-            model: body.model || 'claude-opus',
+            model: body.model || 'gpt-6-astra',
             choices: [{ index: 0, delta: { content: internalResult }, finish_reason: null }]
           };
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
@@ -450,7 +450,7 @@ const server = http.createServer(async (req, res) => {
             id: chatId,
             object: 'chat.completion.chunk',
             created: Math.floor(Date.now() / 1000),
-            model: body.model || 'claude-opus',
+            model: body.model || 'gpt-6-astra',
             choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
           };
           res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
@@ -461,7 +461,7 @@ const server = http.createServer(async (req, res) => {
             id: `chatcmpl-${Date.now()}`,
             object: 'chat.completion',
             created: Math.floor(Date.now() / 1000),
-            model: body.model || 'claude-opus',
+            model: body.model || 'gpt-6-astra',
             choices: [
               {
                 index: 0,
@@ -475,7 +475,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const messages = body.messages || [];
-      const model = body.model || 'claude-opus';
+      const model = body.model || 'gpt-6-astra';
 
       // Parse multimodal messages (extract text and image_url) with Smart Context Window
       // GapGPT has a single-turn token/character limit (~25,000 chars). When conversations

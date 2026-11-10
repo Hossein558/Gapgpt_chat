@@ -29,7 +29,7 @@ def main():
     parser = argparse.ArgumentParser(description="GapGPT Chat Bridge CLI (v1.4.0 with Vision & Auto-Renewal)")
     parser.add_argument("prompt", nargs="?", default="", help="Prompt to send to GapGPT chat")
     parser.add_argument("-p", "--prompt", dest="prompt_flag", default="", help="Prompt flag")
-    parser.add_argument("-m", "--model", default="claude-opus", help="Model (claude-opus, claude-sonnet, gpt-6-astra, gpt-terra, deepseek)")
+    parser.add_argument("-m", "--model", default="gpt-6-astra", help="Model (gpt-6-astra, claude-opus, claude-sonnet, gpt-terra, deepseek)")
     parser.add_argument("-e", "--effort", default="high", choices=["high", "medium", "low", "deep", "thoughtful", "quick", "عمیق", "متفکر", "سریع"], help="Reasoning Effort: high/عمیق (default), medium/متفکر, low/سریع")
     parser.add_argument("-c", "--chat-id", default="", help="Conversation ID to continue")
     parser.add_argument("-i", "--image", action="append", dest="images", default=[], help="Path, URL, or base64 of image(s) for Vision analysis")

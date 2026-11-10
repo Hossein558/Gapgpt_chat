@@ -130,7 +130,7 @@ python probe_limits.py --upload-text "متن طولانی یا لاگ‌های �
 
 | سناریو | موتور و ابزار | مدل انتخابی | تنظیمات سطح تفکر |
 | :--- | :--- | :--- | :--- |
-| **تحلیل معماری، ریویو کد و دیباگ** | GapChat (`ask_gapgpt_chat`) | `Claude Opus 5.5` | `effort: "high"` (عمیق) |
+| **تحلیل معماری، ریویو کد و دیباگ** | GapChat (`ask_gapgpt_chat`) | `gpt-6-astra` (پیش‌فرض) / `Claude Opus 5.5` | `effort: "high"` یا `"medium"` |
 | **اجرای خودکار فایل‌ها و ترمینال** | GapCode (`run_gapcode_task`) | `gpt-6-astra` | `dangerously_bypass_sandbox: true` |
 | **کارهای مرورگر و اسکرین‌شات** | Antigravity Local Tools | Chrome DevTools MCP | اجرای محلی + تحلیل در GapChat |
 | **انتقال متون و کدهای بزرگ** | Ephemeral File Bridge | `api/v1/upload_file` | پیوست به صورت `file_token` |

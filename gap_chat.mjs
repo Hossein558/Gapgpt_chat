@@ -338,7 +338,7 @@ export async function uploadImageToGapGPT(imageInput) {
 }
 
 export function resolveModel(modelName) {
-  const m = (modelName || 'claude-opus').toLowerCase().trim();
+  const m = (modelName || 'gpt-6-astra').toLowerCase().trim();
 
   // 1. Google Gemini Suite
   if (m.includes('argon') || m === 'gemini-4-argon' || m === 'gemini-4') {
@@ -464,7 +464,7 @@ export function resolveModel(modelName) {
     return { key: 'glm-5.3', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GLM 5.3' };
   }
 
-  return { key: 'claude-opus', bot_name: 'A-CLAUDE', mode: 'opus', name: 'Claude Opus 5.5' };
+  return { key: 'gpt-6-astra', bot_name: 'A-GPT-6-ASTRA', mode: '', name: 'GPT-6 Astra' };
 }
 
 export function resolveEffort(effortStr, modelKey = '') {
@@ -886,7 +886,7 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
 // Master query with Auto-Fallback and Graceful Degradation
 export async function askGapChat({
   prompt,
-  model = 'claude-opus',
+  model = 'gpt-6-astra',
   effort = 'high',
   chatId = '',
   images = [],
@@ -1064,7 +1064,7 @@ export async function listRecentChats(limit = 10) {
 if (process.argv[1] && process.argv[1].endsWith('gap_chat.mjs')) {
   const args = process.argv.slice(2);
   let prompt = '';
-  let model = 'claude-opus';
+  let model = 'gpt-6-astra';
   let effort = 'high';
   let chatId = '';
   let isJson = false;
