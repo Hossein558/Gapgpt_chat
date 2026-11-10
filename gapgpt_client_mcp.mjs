@@ -322,6 +322,42 @@ rl.on('line', async (line) => {
           }
         },
         {
+          name: 'run_gapchat_agentic_task',
+          description: '[GapChat Agentic Engine - ZERO DOLLAR COST] Autonomous ReAct coding loop (reads/writes files, executes commands/tests, self-heals errors) using the FREE GapGPT Chat quota (300 msgs/3h & 2400/day) with GPT-6 Astra. Consumes ZERO dollars from the weekly agentic credit. Strictly blocked for confidential excluded conversation IDs.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              task: {
+                type: 'string',
+                description: 'The full actionable task description or instructions for the agent to execute.'
+              },
+              workspace: {
+                type: 'string',
+                description: 'Working directory path where the agent should read/write files and run commands. Defaults to current directory.'
+              },
+              model: {
+                type: 'string',
+                enum: ['gpt-6-astra', 'claude-opus', 'claude-sonnet', 'deepseek'],
+                description: 'Model to use (default: gpt-6-astra).'
+              },
+              effort: {
+                type: 'string',
+                enum: ['high', 'medium', 'low', 'deep', 'thoughtful', 'quick'],
+                description: 'Reasoning effort level (default: medium).'
+              },
+              max_turns: {
+                type: 'number',
+                description: 'Maximum agent iterations / turns (default: 5).'
+              },
+              timeout_seconds: {
+                type: 'number',
+                description: 'Maximum execution timeout in seconds (default: 300).'
+              }
+            },
+            required: ['task']
+          }
+        },
+        {
           name: 'manage_gapgpt_exclusions',
           description: 'Check or add confidential Antigravity Conversation IDs to the exclusion blacklist. Excluded IDs are strictly blocked from being sent or delegated to GapGPT.',
           inputSchema: {
@@ -410,6 +446,32 @@ rl.on('line', async (line) => {
           model: args.model || 'gpt-6-astra',
           timeoutSeconds: args.timeout_seconds || 300,
           bypassSandbox: args.dangerously_bypass_sandbox !== false
+        });
+        return sendResponse(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
+      } else if (name === 'run_gapchat_agentic_task') {
+        const blockedId = checkExclusion(args.task) || checkExclusion(args.workspace);
+        if (blockedId) {
+          return sendResponse(id, {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                status: 'blocked',
+                delegation_blocked: true,
+                excluded_conversation_id: blockedId,
+                message: `⛔ TASK EXECUTION BLOCKED BY POLICY: Conversation ID [${blockedId}] is on the strict internal-only exclusion list.`
+              }, null, 2)
+            }]
+          });
+        }
+
+        const { executeGapChatAgenticTask } = await import('./gapchat_agent.mjs');
+        const result = await executeGapChatAgenticTask({
+          task: args.task,
+          workspace: args.workspace,
+          model: args.model || 'gpt-6-astra',
+          effort: args.effort || 'medium',
+          maxTurns: args.max_turns || 5,
+          timeoutSeconds: args.timeout_seconds || 300
         });
         return sendResponse(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
       } else if (name === 'manage_gapgpt_exclusions') {
