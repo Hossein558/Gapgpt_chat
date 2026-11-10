@@ -21,6 +21,7 @@ Local State
 tokens.json
 .token
 run_remote.py
+analyze_remote_*.py
 askpass.bat
 deploy_remote.py
 test_remote_http.py
