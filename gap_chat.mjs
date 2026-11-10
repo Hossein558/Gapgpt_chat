@@ -477,10 +477,7 @@ export function resolveEffort(effortStr, modelKey = '') {
   if (e === 'max' || e === 'حداکثر') {
     return { level: 'max', label: 'حداکثر (Maximum Reasoning)', reasoning_effort: 'max' };
   }
-  if (e === 'xhigh' || e === 'extra-high' || e === 'extra_high' || e === 'خیلی عمیق' || e === 'بسیار عمیق' || e === 'فوق عمیق') {
-    return { level: 'xhigh', label: 'خیلی عمیق (Extra High)', reasoning_effort: 'xhigh' };
-  }
-  if (e === 'high' || e === 'deep' || e === 'عمیق') {
+  if (e === 'xhigh' || e === 'extra-high' || e === 'extra_high' || e === 'خیلی عمیق' || e === 'بسیار عمیق' || e === 'فوق عمیق' || e === 'high' || e === 'deep' || e === 'عمیق') {
     return { level: 'high', label: 'عمیق (Deep)', reasoning_effort: 'high' };
   }
   if (e === 'medium' || e === 'thoughtful' || e === 'متفکر') {
@@ -493,7 +490,7 @@ export function resolveEffort(effortStr, modelKey = '') {
   // Intelligent model-aware defaults when no explicit effort is passed
   const mk = (modelKey || '').toLowerCase();
   if (mk.includes('opus')) {
-    return { level: 'xhigh', label: 'خیلی عمیق (Extra High)', reasoning_effort: 'xhigh' };
+    return { level: 'high', label: 'عمیق (Deep)', reasoning_effort: 'high' };
   }
   if (mk.includes('argon') || mk.includes('sol') || mk.includes('terra') || mk.includes('sonnet') || mk.includes('fable') || mk.includes('astra')) {
     return { level: 'high', label: 'عمیق (Deep)', reasoning_effort: 'high' };
@@ -747,6 +744,12 @@ function executeSocketQuery({ prompt, modelConfig, effortConfig, chatId, fileTok
       const modeExtra = {};
       if (effortConfig.reasoning_effort) {
         modeExtra.reasoning_effort = effortConfig.reasoning_effort;
+      }
+      if (modelConfig.mode) {
+        modeExtra.model_mode = modelConfig.mode;
+        modeExtra.model_routing_preference = modelConfig.mode;
+        modeExtra.selected_simplified_model = modelConfig.bot_name;
+        modeExtra.routed_chat_model = modelConfig.bot_name;
       }
 
       const actionPayload = {
