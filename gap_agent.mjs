@@ -2,13 +2,15 @@
 // gap_agent.mjs - Command-line interface for executeGapChatAgenticTask
 import { executeGapChatAgenticTask } from './gapchat_agent.mjs';
 import path from 'path';
+import fs from 'fs';
 
 const args = process.argv.slice(2);
 let task = '';
 let workspace = process.cwd();
+let explicitWorkspace = false;
 let model = 'gpt-6-astra';
 let effort = 'medium';
-let maxTurns = 5;
+let maxTurns = 8;
 let timeoutSeconds = 300;
 let jsonOutput = false;
 
@@ -16,6 +18,7 @@ for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === '--workspace' || arg === '-C' || arg === '-w') {
     workspace = path.resolve(args[++i]);
+    explicitWorkspace = true;
   } else if (arg === '--model' || arg === '-m') {
     model = args[++i];
   } else if (arg === '--effort' || arg === '-e') {
@@ -34,6 +37,26 @@ for (let i = 0; i < args.length; i++) {
 if (!task) {
   console.error('Usage: node gap_agent.mjs "<task>" [-C workspace] [-m model] [--json]');
   process.exit(1);
+}
+
+// Smart Workspace Auto-Detection: check if task starts with a directory path
+if (!explicitWorkspace) {
+  const candidateMatch = task.match(/^([a-zA-Z]:\\[^\t\r\n*?"<>|]+|\/[^\t\r\n*?"<>|]+)/);
+  if (candidateMatch) {
+    let candidate = candidateMatch[1].trim();
+    while (candidate.length > 3) {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        workspace = path.resolve(candidate);
+        break;
+      }
+      const lastSpace = candidate.lastIndexOf(' ');
+      if (lastSpace > 0) {
+        candidate = candidate.slice(0, lastSpace).trim();
+      } else {
+        break;
+      }
+    }
+  }
 }
 
 if (!jsonOutput) {

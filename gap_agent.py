@@ -39,7 +39,7 @@ def main():
     parser.add_argument("-C", "--cd", "--workspace", dest="workspace", default="", help="Workspace directory (default: current directory)")
     parser.add_argument("-m", "--model", default="gpt-6-astra", help="Model to use (default: gpt-6-astra)")
     parser.add_argument("-e", "--effort", default="medium", choices=["high", "medium", "low", "deep", "thoughtful", "quick"], help="Reasoning effort")
-    parser.add_argument("--max-turns", type=int, default=5, help="Maximum agent turns (default: 5)")
+    parser.add_argument("--max-turns", type=int, default=8, help="Maximum agent turns (default: 8)")
     parser.add_argument("--timeout", type=int, default=300, help="Total execution timeout in seconds (default: 300)")
     parser.add_argument("--json", action="store_true", help="Output raw JSON result")
 

@@ -186,7 +186,7 @@ export async function executeGapChatAgenticTask({
   workspace,
   model = 'gpt-6-astra',
   effort = 'medium',
-  maxTurns = 5,
+  maxTurns = 8,
   timeoutSeconds = 300,
   commandTimeoutSeconds = 60,
   conversationId = null,
@@ -241,7 +241,8 @@ Summary of changes made, tests passed, and final verification status.
 
 RULES:
 - Do NOT output hypothetical examples; every action block will be executed immediately on disk.
-- Prefer self-contained, high-quality implementations with automated tests.
+- When asked to inspect, review, or improve code: Be an ACTIVE CODE IMPROVER. Do not spend all turns passively inspecting with shell commands. Rapidly read files (using read_file), formulate clear architectural improvements, and write the upgraded files using <<<ACTION: write_file path="...">>>.
+- You have a strict budget of maximum ${maxTurns} turns. Finalize all changes and output <<<COMPLETION>>> before running out of turns.
 - When you receive test or command results in the next turn, analyze errors and fix the files immediately.`;
 
   let currentPrompt = `${systemPrompt}\n\n[USER TASK]:\n${task}`;
@@ -361,11 +362,16 @@ RULES:
       break;
     }
 
+    let deadlineWarning = '';
+    if (turnsUsed >= maxTurns - 1) {
+      deadlineWarning = `\n\n⚠️ [CRITICAL BUDGET WARNING: You are on Turn ${turnsUsed} of ${maxTurns}! Deliver all your code changes now using <<<ACTION: write_file path="...">>> and conclude with <<<COMPLETION>>>. Do NOT run further exploratory commands.]`;
+    }
+
     if (actions.length === 0) {
       // Model replied purely in text without action blocks
-      currentPrompt = `[OBSERVATION: No valid action blocks were detected. Please provide executable actions using <<<ACTION: write_file path="...">>> ... <<<END_ACTION>>> or <<<ACTION: run_command>>> ... <<<END_ACTION>>>, or <<<COMPLETION>>> if finished.]`;
+      currentPrompt = `[OBSERVATION: No valid action blocks were detected. Please provide executable actions using <<<ACTION: write_file path="...">>> ... <<<END_ACTION>>> or <<<ACTION: run_command>>> ... <<<END_ACTION>>>, or <<<COMPLETION>>> if finished.]${deadlineWarning}`;
     } else {
-      currentPrompt = `[OBSERVATION OF ACTIONS (Turn ${turnsUsed})]:\n${observations.join('\n\n')}\n\n[INSTRUCTION: Review observations. If errors occurred, fix files. If verified, output <<<COMPLETION>>>.]`;
+      currentPrompt = `[OBSERVATION OF ACTIONS (Turn ${turnsUsed}/${maxTurns})]:\n${observations.join('\n\n')}\n\n[INSTRUCTION: Review observations. If errors occurred, fix files. If verified or finished, write final improvements and output <<<COMPLETION>>>.]${deadlineWarning}`;
     }
   }
 
